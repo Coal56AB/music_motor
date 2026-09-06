@@ -1,0 +1,5 @@
+-r requirements.txt
+librosa==0.9.2
+numba==0.56.4
+llvmlite==0.39.1
+# Optional neural transcription is isolated: see ../README.md#audio.

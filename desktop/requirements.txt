@@ -1,0 +1,9 @@
+# Target: CPython 3.7 x64 (explicit user requirement).
+PySide2==5.15.2.1
+pyserial==3.5
+mido==1.2.10
+numpy==1.21.6
+scipy==1.7.3
+soundfile==0.12.1
+cffi==1.15.1
+imageio-ffmpeg==0.4.9

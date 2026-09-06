@@ -1,0 +1,12 @@
+_service/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.uvguix.*
+*.uvprojx.bak
+*.uvoptx.bak
+firmware/MDK-ARM/MusicMotor/
+firmware/MDK-ARM/RTE/
+desktop/user_settings.json
+desktop/audio_cache/
+MusicMotorStudio.exe

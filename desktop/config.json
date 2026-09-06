@@ -1,0 +1,38 @@
+{
+  "baudrate": 115200,
+  "installed_mask": 15,
+  "music_mask": 15,
+  "names": [
+    "Мелодия",
+    "Гармония",
+    "Бас",
+    "Акцент",
+    "Голос 5",
+    "Голос 6"
+  ],
+  "steps_per_revolution": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200
+  ],
+  "directions": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "microstep_raw": 0,
+  "microstep": 1,
+  "min_frequency": 20,
+  "max_frequency": 4000,
+  "max_polyphony": 4,
+  "strategy": "stable",
+  "disable_after_stop": true,
+  "lookahead_ms": 1500,
+  "port": ""
+}

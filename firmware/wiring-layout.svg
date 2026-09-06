@@ -1,0 +1,210 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1160" viewBox="0 0 1600 1160">
+<rect width="1600" height="1160" fill="#f6f8fb"/>
+<style>text{font-family:Segoe UI,Arial,sans-serif;fill:#233448}.title{font-size:29px;font-weight:700}.body{font-size:23px}.small{font-size:18px}.pin{font-size:19px;font-weight:600}</style>
+<text x="30" y="42" class="title">Распиновка под вашу компоновку · вид сверху, USB снизу</text>
+<text x="30" y="76" class="body">M1 / M2 / M5 / M6 — внешние ряды; M3 / M4 — внутренние. EN = ENABLE.</text>
+<rect x="365" y="239" width="870" height="715" rx="10" fill="#e6eef6" stroke="#bdcbd8" stroke-width="2"/>
+<text x="650" y="276" class="title">STM32F103 · CH340</text>
+<rect x="25" y="692" width="305" height="126" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
+<text x="40" y="721" class="body" style="fill:#168579">M1 · внешний</text>
+<text x="40" y="752" class="body">STEP PA15</text>
+<text x="40" y="780" class="body">DIR PB3 · EN PA11</text>
+<text x="40" y="805" class="small">TIM2 CH1</text>
+<rect x="25" y="429" width="305" height="126" rx="10" fill="#fff" stroke="#317bc0" stroke-width="2"/>
+<text x="40" y="458" class="body" style="fill:#317bc0">M2 · внешний</text>
+<text x="40" y="489" class="body">STEP PB7</text>
+<text x="40" y="517" class="body">DIR PB8 · EN PB5</text>
+<text x="40" y="542" class="small">TIM4 CH2</text>
+<rect x="385" y="106" width="370" height="126" rx="10" fill="#fff" stroke="#9457bd" stroke-width="2"/>
+<text x="400" y="135" class="body" style="fill:#9457bd">M3 · внутренний</text>
+<text x="400" y="166" class="body">STEP PB6</text>
+<text x="400" y="194" class="body">DIR PB4 · EN PB9</text>
+<text x="400" y="219" class="small">TIM4 CH1</text>
+<rect x="845" y="106" width="370" height="126" rx="10" fill="#fff" stroke="#bd861d" stroke-width="2"/>
+<text x="860" y="135" class="body" style="fill:#bd861d">M4 · внутренний</text>
+<text x="860" y="166" class="body">STEP PA6</text>
+<text x="860" y="194" class="body">DIR PA4 · EN PB2</text>
+<text x="860" y="219" class="small">TIM3 CH1</text>
+<rect x="1270" y="429" width="305" height="126" rx="10" fill="#fff" stroke="#c44f6c" stroke-width="2"/>
+<text x="1285" y="458" class="body" style="fill:#c44f6c">M5 · внешний</text>
+<text x="1285" y="489" class="body">STEP PA7</text>
+<text x="1285" y="517" class="body">DIR PB0 · EN PA5</text>
+<text x="1285" y="542" class="small">TIM3 CH2</text>
+<rect x="1270" y="692" width="305" height="126" rx="10" fill="#fff" stroke="#699a28" stroke-width="2"/>
+<text x="1285" y="721" class="body" style="fill:#699a28">M6 · внешний</text>
+<text x="1285" y="752" class="body">STEP PB10</text>
+<text x="1285" y="780" class="body">DIR PB12 · EN PB1</text>
+<text x="1285" y="805" class="small">TIM2 CH3</text>
+<text x="391" y="312" class="small">Левый внешний</text>
+<rect x="384" y="332" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="395" cy="354" r="5" fill="#8999aa"/>
+<text x="407" y="360" class="pin" style="fill:#8999aa">VBAT</text>
+<text x="470" y="360" class="small" style="fill:#8999aa"></text>
+<rect x="384" y="387" width="192" height="45" rx="10" fill="#fff" stroke="#317bc0" stroke-width="2"/>
+<circle cx="395" cy="409" r="5" fill="#317bc0"/>
+<text x="407" y="415" class="pin" style="fill:#317bc0">PB8</text>
+<text x="470" y="415" class="small" style="fill:#317bc0">M2 DIR</text>
+<rect x="384" y="442" width="192" height="45" rx="10" fill="#fff" stroke="#317bc0" stroke-width="2"/>
+<circle cx="395" cy="464" r="5" fill="#317bc0"/>
+<text x="407" y="470" class="pin" style="fill:#317bc0">PB7</text>
+<text x="470" y="470" class="small" style="fill:#317bc0">M2 STEP</text>
+<rect x="384" y="497" width="192" height="45" rx="10" fill="#fff" stroke="#317bc0" stroke-width="2"/>
+<circle cx="395" cy="519" r="5" fill="#317bc0"/>
+<text x="407" y="525" class="pin" style="fill:#317bc0">PB5</text>
+<text x="470" y="525" class="small" style="fill:#317bc0">M2 EN</text>
+<rect x="384" y="552" width="192" height="45" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
+<circle cx="395" cy="574" r="5" fill="#168579"/>
+<text x="407" y="580" class="pin" style="fill:#168579">PB3</text>
+<text x="470" y="580" class="small" style="fill:#168579">M1 DIR</text>
+<rect x="384" y="607" width="192" height="45" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
+<circle cx="395" cy="629" r="5" fill="#168579"/>
+<text x="407" y="635" class="pin" style="fill:#168579">PA15</text>
+<text x="470" y="635" class="small" style="fill:#168579">M1 STEP</text>
+<rect x="384" y="662" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="395" cy="684" r="5" fill="#8999aa"/>
+<text x="407" y="690" class="pin" style="fill:#8999aa">PA13</text>
+<text x="470" y="690" class="small" style="fill:#8999aa">SWDIO</text>
+<rect x="384" y="717" width="192" height="45" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
+<circle cx="395" cy="739" r="5" fill="#168579"/>
+<text x="407" y="745" class="pin" style="fill:#168579">PA11</text>
+<text x="470" y="745" class="small" style="fill:#168579">M1 EN</text>
+<rect x="384" y="772" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="395" cy="794" r="5" fill="#8999aa"/>
+<text x="407" y="800" class="pin" style="fill:#8999aa">PA9</text>
+<text x="470" y="800" class="small" style="fill:#8999aa">UART TX</text>
+<rect x="384" y="827" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="395" cy="849" r="5" fill="#8999aa"/>
+<text x="407" y="855" class="pin" style="fill:#8999aa">GND</text>
+<text x="470" y="855" class="small" style="fill:#8999aa"></text>
+<text x="604" y="312" class="small">Левый внутренний</text>
+<rect x="597" y="332" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="608" cy="354" r="5" fill="#8999aa"/>
+<text x="620" y="360" class="pin" style="fill:#8999aa">PC13</text>
+<text x="683" y="360" class="small" style="fill:#8999aa"></text>
+<rect x="597" y="387" width="192" height="45" rx="10" fill="#fff" stroke="#9457bd" stroke-width="2"/>
+<circle cx="608" cy="409" r="5" fill="#9457bd"/>
+<text x="620" y="415" class="pin" style="fill:#9457bd">PB9</text>
+<text x="683" y="415" class="small" style="fill:#9457bd">M3 EN</text>
+<rect x="597" y="442" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="608" cy="464" r="5" fill="#8999aa"/>
+<text x="620" y="470" class="pin" style="fill:#8999aa">BOOT0</text>
+<text x="683" y="470" class="small" style="fill:#8999aa"></text>
+<rect x="597" y="497" width="192" height="45" rx="10" fill="#fff" stroke="#9457bd" stroke-width="2"/>
+<circle cx="608" cy="519" r="5" fill="#9457bd"/>
+<text x="620" y="525" class="pin" style="fill:#9457bd">PB6</text>
+<text x="683" y="525" class="small" style="fill:#9457bd">M3 STEP</text>
+<rect x="597" y="552" width="192" height="45" rx="10" fill="#fff" stroke="#9457bd" stroke-width="2"/>
+<circle cx="608" cy="574" r="5" fill="#9457bd"/>
+<text x="620" y="580" class="pin" style="fill:#9457bd">PB4</text>
+<text x="683" y="580" class="small" style="fill:#9457bd">M3 DIR</text>
+<rect x="597" y="607" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="608" cy="629" r="5" fill="#8999aa"/>
+<text x="620" y="635" class="pin" style="fill:#8999aa">PA14</text>
+<text x="683" y="635" class="small" style="fill:#8999aa">SWCLK</text>
+<rect x="597" y="662" width="192" height="45" rx="10" fill="#fff" stroke="#546a8a" stroke-width="2"/>
+<circle cx="608" cy="684" r="5" fill="#546a8a"/>
+<text x="620" y="690" class="pin" style="fill:#546a8a">PA12</text>
+<text x="683" y="690" class="small" style="fill:#546a8a">RESET</text>
+<rect x="597" y="717" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="608" cy="739" r="5" fill="#8999aa"/>
+<text x="620" y="745" class="pin" style="fill:#8999aa">PA10</text>
+<text x="683" y="745" class="small" style="fill:#8999aa">UART RX</text>
+<rect x="597" y="772" width="192" height="45" rx="10" fill="#fff" stroke="#546a8a" stroke-width="2"/>
+<circle cx="608" cy="794" r="5" fill="#546a8a"/>
+<text x="620" y="800" class="pin" style="fill:#546a8a">PA8</text>
+<text x="683" y="800" class="small" style="fill:#546a8a">SLEEP</text>
+<rect x="597" y="827" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="608" cy="849" r="5" fill="#8999aa"/>
+<text x="620" y="855" class="pin" style="fill:#8999aa">5V</text>
+<text x="683" y="855" class="small" style="fill:#8999aa"></text>
+<text x="831" y="312" class="small">Правый внутренний</text>
+<rect x="824" y="332" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="835" cy="354" r="5" fill="#8999aa"/>
+<text x="847" y="360" class="pin" style="fill:#8999aa">PA0</text>
+<text x="910" y="360" class="small" style="fill:#8999aa"></text>
+<rect x="824" y="387" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="835" cy="409" r="5" fill="#8999aa"/>
+<text x="847" y="415" class="pin" style="fill:#8999aa">PA2</text>
+<text x="910" y="415" class="small" style="fill:#8999aa"></text>
+<rect x="824" y="442" width="192" height="45" rx="10" fill="#fff" stroke="#bd861d" stroke-width="2"/>
+<circle cx="835" cy="464" r="5" fill="#bd861d"/>
+<text x="847" y="470" class="pin" style="fill:#bd861d">PA4</text>
+<text x="910" y="470" class="small" style="fill:#bd861d">M4 DIR</text>
+<rect x="824" y="497" width="192" height="45" rx="10" fill="#fff" stroke="#bd861d" stroke-width="2"/>
+<circle cx="835" cy="519" r="5" fill="#bd861d"/>
+<text x="847" y="525" class="pin" style="fill:#bd861d">PA6</text>
+<text x="910" y="525" class="small" style="fill:#bd861d">M4 STEP</text>
+<rect x="824" y="552" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="835" cy="574" r="5" fill="#8999aa"/>
+<text x="847" y="580" class="pin" style="fill:#8999aa">NRST</text>
+<text x="910" y="580" class="small" style="fill:#8999aa"></text>
+<rect x="824" y="607" width="192" height="45" rx="10" fill="#fff" stroke="#bd861d" stroke-width="2"/>
+<circle cx="835" cy="629" r="5" fill="#bd861d"/>
+<text x="847" y="635" class="pin" style="fill:#bd861d">PB2</text>
+<text x="910" y="635" class="small" style="fill:#bd861d">M4 EN</text>
+<rect x="824" y="662" width="192" height="45" rx="10" fill="#fff" stroke="#546a8a" stroke-width="2"/>
+<circle cx="835" cy="684" r="5" fill="#546a8a"/>
+<text x="847" y="690" class="pin" style="fill:#546a8a">PB11</text>
+<text x="910" y="690" class="small" style="fill:#546a8a">MS3</text>
+<rect x="824" y="717" width="192" height="45" rx="10" fill="#fff" stroke="#546a8a" stroke-width="2"/>
+<circle cx="835" cy="739" r="5" fill="#546a8a"/>
+<text x="847" y="745" class="pin" style="fill:#546a8a">PB13</text>
+<text x="910" y="745" class="small" style="fill:#546a8a">MS2</text>
+<rect x="824" y="772" width="192" height="45" rx="10" fill="#fff" stroke="#546a8a" stroke-width="2"/>
+<circle cx="835" cy="794" r="5" fill="#546a8a"/>
+<text x="847" y="800" class="pin" style="fill:#546a8a">PB15</text>
+<text x="910" y="800" class="small" style="fill:#546a8a">MS1</text>
+<rect x="824" y="827" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="835" cy="849" r="5" fill="#8999aa"/>
+<text x="847" y="855" class="pin" style="fill:#8999aa">3V3</text>
+<text x="910" y="855" class="small" style="fill:#8999aa"></text>
+<text x="1044" y="312" class="small">Правый внешний</text>
+<rect x="1037" y="332" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="1048" cy="354" r="5" fill="#8999aa"/>
+<text x="1060" y="360" class="pin" style="fill:#8999aa">PA1</text>
+<text x="1123" y="360" class="small" style="fill:#8999aa"></text>
+<rect x="1037" y="387" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="1048" cy="409" r="5" fill="#8999aa"/>
+<text x="1060" y="415" class="pin" style="fill:#8999aa">PA3</text>
+<text x="1123" y="415" class="small" style="fill:#8999aa"></text>
+<rect x="1037" y="442" width="192" height="45" rx="10" fill="#fff" stroke="#c44f6c" stroke-width="2"/>
+<circle cx="1048" cy="464" r="5" fill="#c44f6c"/>
+<text x="1060" y="470" class="pin" style="fill:#c44f6c">PA5</text>
+<text x="1123" y="470" class="small" style="fill:#c44f6c">M5 EN</text>
+<rect x="1037" y="497" width="192" height="45" rx="10" fill="#fff" stroke="#c44f6c" stroke-width="2"/>
+<circle cx="1048" cy="519" r="5" fill="#c44f6c"/>
+<text x="1060" y="525" class="pin" style="fill:#c44f6c">PA7</text>
+<text x="1123" y="525" class="small" style="fill:#c44f6c">M5 STEP</text>
+<rect x="1037" y="552" width="192" height="45" rx="10" fill="#fff" stroke="#c44f6c" stroke-width="2"/>
+<circle cx="1048" cy="574" r="5" fill="#c44f6c"/>
+<text x="1060" y="580" class="pin" style="fill:#c44f6c">PB0</text>
+<text x="1123" y="580" class="small" style="fill:#c44f6c">M5 DIR</text>
+<rect x="1037" y="607" width="192" height="45" rx="10" fill="#fff" stroke="#699a28" stroke-width="2"/>
+<circle cx="1048" cy="629" r="5" fill="#699a28"/>
+<text x="1060" y="635" class="pin" style="fill:#699a28">PB1</text>
+<text x="1123" y="635" class="small" style="fill:#699a28">M6 EN</text>
+<rect x="1037" y="662" width="192" height="45" rx="10" fill="#fff" stroke="#699a28" stroke-width="2"/>
+<circle cx="1048" cy="684" r="5" fill="#699a28"/>
+<text x="1060" y="690" class="pin" style="fill:#699a28">PB10</text>
+<text x="1123" y="690" class="small" style="fill:#699a28">M6 STEP</text>
+<rect x="1037" y="717" width="192" height="45" rx="10" fill="#fff" stroke="#699a28" stroke-width="2"/>
+<circle cx="1048" cy="739" r="5" fill="#699a28"/>
+<text x="1060" y="745" class="pin" style="fill:#699a28">PB12</text>
+<text x="1123" y="745" class="small" style="fill:#699a28">M6 DIR</text>
+<rect x="1037" y="772" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="1048" cy="794" r="5" fill="#8999aa"/>
+<text x="1060" y="800" class="pin" style="fill:#8999aa">PB14</text>
+<text x="1123" y="800" class="small" style="fill:#8999aa"></text>
+<rect x="1037" y="827" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
+<circle cx="1048" cy="849" r="5" fill="#8999aa"/>
+<text x="1060" y="855" class="pin" style="fill:#8999aa">GND</text>
+<text x="1123" y="855" class="small" style="fill:#8999aa"></text>
+<rect x="745" y="906" width="110" height="43" rx="10" fill="#b7c5d3" stroke="#bdcbd8" stroke-width="2"/>
+<text x="773" y="936" class="body">USB</text>
+<rect x="30" y="981" width="1540" height="110" rx="10" fill="#fff" stroke="#bdcbd8" stroke-width="2"/>
+<text x="50" y="1013" class="body">Общие сигналы на все драйверы · внутренние контакты</text>
+<text x="50" y="1048" class="body">PB15 → MS1     PB13 → MS2     PB11 → MS3     PA8 → SLEEP     PA12 → RESET</text>
+<text x="50" y="1076" class="small">GND общий · VDD логики 3,3 В при совместимости модуля · VMOT от отдельного источника</text>
+<text x="30" y="1120" class="small">Порядок контактов подтверждён пользователем. Перед пайкой сверьте надписи GPIO на своей плате.</text>
+<text x="30" y="1148" class="small">PA11/PA12 используются как GPIO: USB должен идти через CH340, а не через USB-периферию STM32.</text>
+</svg>
