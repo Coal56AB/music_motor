@@ -1,0 +1,4 @@
+[submodule "display"]
+	path = display
+	url = https://github.com/Coal56AB/HMI_Display.git
+	branch = codex/music-box-touch
