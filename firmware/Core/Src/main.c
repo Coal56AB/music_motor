@@ -374,21 +374,21 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, M4_DIR_Pin|SLEEP_Pin|RESET_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, M4_DIR_Pin|M1_DIR_Pin|SLEEP_Pin|RESET_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, M5_ENABLE_Pin|M1_ENABLE_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, M5_ENABLE_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, M5_DIR_Pin|MS3_Pin|M6_DIR_Pin|MS2_Pin
-                          |MS1_Pin|M1_DIR_Pin|M3_DIR_Pin|M2_DIR_Pin, GPIO_PIN_RESET);
+                          |MS1_Pin|M3_DIR_Pin|M2_DIR_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, M6_ENABLE_Pin|M4_ENABLE_Pin|M2_ENABLE_Pin|M3_ENABLE_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, M6_ENABLE_Pin|M4_ENABLE_Pin|M2_ENABLE_Pin|M3_ENABLE_Pin|M1_ENABLE_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pins : M4_DIR_Pin M5_ENABLE_Pin SLEEP_Pin M1_ENABLE_Pin
+  /*Configure GPIO pins : M4_DIR_Pin M5_ENABLE_Pin SLEEP_Pin M1_DIR_Pin
                            RESET_Pin */
-  GPIO_InitStruct.Pin = M4_DIR_Pin|M5_ENABLE_Pin|SLEEP_Pin|M1_ENABLE_Pin
+  GPIO_InitStruct.Pin = M4_DIR_Pin|M5_ENABLE_Pin|SLEEP_Pin|M1_DIR_Pin
                           |RESET_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -396,10 +396,10 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : M5_DIR_Pin M6_ENABLE_Pin M4_ENABLE_Pin MS3_Pin
-                           M6_DIR_Pin MS2_Pin MS1_Pin M1_DIR_Pin
+                           M6_DIR_Pin MS2_Pin MS1_Pin M1_ENABLE_Pin
                            M3_DIR_Pin M2_ENABLE_Pin M2_DIR_Pin M3_ENABLE_Pin */
   GPIO_InitStruct.Pin = M5_DIR_Pin|M6_ENABLE_Pin|M4_ENABLE_Pin|MS3_Pin
-                          |M6_DIR_Pin|MS2_Pin|MS1_Pin|M1_DIR_Pin
+                          |M6_DIR_Pin|MS2_Pin|MS1_Pin|M1_ENABLE_Pin
                           |M3_DIR_Pin|M2_ENABLE_Pin|M2_DIR_Pin|M3_ENABLE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;

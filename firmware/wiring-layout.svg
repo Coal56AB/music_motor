@@ -8,7 +8,7 @@
 <rect x="25" y="692" width="305" height="126" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
 <text x="40" y="721" class="body" style="fill:#168579">M1 · внешний</text>
 <text x="40" y="752" class="body">STEP PA15</text>
-<text x="40" y="780" class="body">DIR PB3 · EN PA11</text>
+<text x="40" y="780" class="body">DIR PA11 · EN PB3</text>
 <text x="40" y="805" class="small">TIM2 CH1</text>
 <rect x="25" y="429" width="305" height="126" rx="10" fill="#fff" stroke="#317bc0" stroke-width="2"/>
 <text x="40" y="458" class="body" style="fill:#317bc0">M2 · внешний</text>
@@ -55,7 +55,7 @@
 <rect x="384" y="552" width="192" height="45" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
 <circle cx="395" cy="574" r="5" fill="#168579"/>
 <text x="407" y="580" class="pin" style="fill:#168579">PB3</text>
-<text x="470" y="580" class="small" style="fill:#168579">M1 DIR</text>
+<text x="470" y="580" class="small" style="fill:#168579">M1 EN</text>
 <rect x="384" y="607" width="192" height="45" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
 <circle cx="395" cy="629" r="5" fill="#168579"/>
 <text x="407" y="635" class="pin" style="fill:#168579">PA15</text>
@@ -67,7 +67,7 @@
 <rect x="384" y="717" width="192" height="45" rx="10" fill="#fff" stroke="#168579" stroke-width="2"/>
 <circle cx="395" cy="739" r="5" fill="#168579"/>
 <text x="407" y="745" class="pin" style="fill:#168579">PA11</text>
-<text x="470" y="745" class="small" style="fill:#168579">M1 EN</text>
+<text x="470" y="745" class="small" style="fill:#168579">M1 DIR</text>
 <rect x="384" y="772" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
 <circle cx="395" cy="794" r="5" fill="#8999aa"/>
 <text x="407" y="800" class="pin" style="fill:#8999aa">PA9</text>

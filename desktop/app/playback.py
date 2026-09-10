@@ -4,6 +4,22 @@ from protocol.wire import Command as C, event_bytes
 from app.music_math import note_frequency
 
 
+def short_gap_note(segments, motor, position, threshold):
+    previous = upcoming = None
+    for start, end, voice, uid, pitch in segments:
+        if voice != motor:
+            continue
+        if start <= position < end:
+            return None
+        if end <= position and (previous is None or end > previous[0]):
+            previous = (end, pitch)
+        if start > position and (upcoming is None or start < upcoming):
+            upcoming = start
+    if previous is not None and upcoming is not None and 0 < upcoming - previous[0] <= threshold:
+        return previous[1]
+    return None
+
+
 class StreamPlayer(QObject):
     changed = Signal(str)
     progress = Signal(int, int)
@@ -28,7 +44,7 @@ class StreamPlayer(QObject):
         self.state = value
         self.changed.emit(value)
 
-    def play(self, allocation, config):
+    def play(self, allocation, config, start_ms=0):
         if not self.client.connected:
             self.failed.emit("Сначала подключите UART или симулятор")
             return
@@ -36,8 +52,16 @@ class StreamPlayer(QObject):
         self.disable_after_stop = config["disable_after_stop"]
         self.lookahead = config["lookahead_ms"]
         self.config = config.copy()
-        self.offset = 0
+        self.offset = max(0, min(int(start_ms), max(0, allocation.duration_ms - 1)))
         self.begin()
+
+    def seek(self, position):
+        if not self.allocation or self.state == 'stopped':
+            return
+        self.offset = self.position = max(0, min(int(position), max(0, self.allocation.duration_ms - 1)))
+        if self.state in ('playing', 'preparing'):
+            self.begin()
+        self.progress.emit(self.position, 0)
 
     def begin(self):
         self.epoch += 1
@@ -141,7 +165,7 @@ class StreamPlayer(QObject):
         if self.state == "paused":
             self.begin()
 
-    def stop(self, emergency=False):
+    def stop(self, emergency=False, disable=None):
         self.epoch += 1
         self.inflight = False
         self.set_state("stopped")
@@ -149,7 +173,7 @@ class StreamPlayer(QObject):
             if emergency:
                 self.client.emergency()
             else:
-                self.client.send(C.STREAM_STOP, bytes([int(self.disable_after_stop)]), urgent=True)
+                self.client.send(C.STREAM_STOP, bytes([int(self.disable_after_stop if disable is None else disable)]), urgent=True)
 
     def on_fault(self, text):
         if self.state != "stopped":

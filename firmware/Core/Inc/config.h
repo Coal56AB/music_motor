@@ -56,7 +56,7 @@
  * программно инвертировать нельзя. Перепутанные пары обмоток чинятся проводами.
  */
 #ifndef M1_DIR_INVERT
-#define M1_DIR_INVERT 0u
+#define M1_DIR_INVERT 1u
 #endif
 #ifndef M2_DIR_INVERT
 #define M2_DIR_INVERT 0u
@@ -68,7 +68,7 @@
 #define M4_DIR_INVERT 0u
 #endif
 #ifndef M5_DIR_INVERT
-#define M5_DIR_INVERT 0u
+#define M5_DIR_INVERT 1u
 #endif
 #ifndef M6_DIR_INVERT
 #define M6_DIR_INVERT 0u
@@ -82,7 +82,7 @@ static inline uint8_t config_dir_level(uint8_t motor, uint8_t logical_dir) {
 
 /* Итоговая разводка пользователя. Позиции сверху вниз, USB снизу.
  * M  ряд                  позиции   DIR  STEP  ENABLE  таймер/канал
- * 1  внешний левый        5,6,8     PB3  PA15  PA11    TIM2 CH1
+ * 1  внешний левый        8,6,5     PA11 PA15  PB3     TIM2 CH1
  * 2  внешний левый        2,3,4     PB8  PB7   PB5     TIM4 CH2
  * 3  внутренний левый     2,4,5     PB4  PB6   PB9     TIM4 CH1
  * 4  внутренний правый    3,4,6     PA4  PA6   PB2     TIM3 CH1

@@ -1,5 +1,7 @@
 {
   "baudrate": 115200,
+  "motor_layout": "horizontal",
+  "note_hold_ms": 250,
   "installed_mask": 15,
   "music_mask": 15,
   "names": [
@@ -29,7 +31,7 @@
   "microstep_raw": 0,
   "microstep": 1,
   "min_frequency": 20,
-  "max_frequency": 4000,
+  "max_frequency": 1200,
   "max_polyphony": 4,
   "strategy": "stable",
   "disable_after_stop": true,

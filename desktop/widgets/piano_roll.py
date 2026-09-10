@@ -5,9 +5,8 @@ from PySide2.QtWidgets import (
     QGraphicsView,
     QGraphicsScene,
     QGraphicsRectItem,
+    QGraphicsSimpleTextItem,
     QGraphicsItem,
-    QUndoStack,
-    QUndoCommand,
     QInputDialog,
 )
 from midi.model import Note
@@ -15,9 +14,9 @@ from midi.allocator import MOTOR_COLORS
 from app.music_math import note_name
 
 
-class EditCommand(QUndoCommand):
+class EditCommand:
     def __init__(self, roll, before, after, name):
-        super().__init__(name)
+        self.name = name
         self.roll = roll
         self.before = before
         self.after = after
@@ -34,6 +33,32 @@ class EditCommand(QUndoCommand):
         self.apply(self.after)
 
 
+class EditHistory:
+    """Call edits directly; PySide2/Nuitka can skip QUndoCommand virtual methods."""
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.commands, self.index = [], 0
+
+    def push(self, command):
+        del self.commands[self.index:]
+        self.commands.append(command)
+        self.index += 1
+        command.redo()
+
+    def undo(self, *_args):
+        if self.index:
+            self.index -= 1
+            self.commands[self.index].undo()
+
+    def redo(self, *_args):
+        if self.index < len(self.commands):
+            command = self.commands[self.index]
+            self.index += 1
+            command.redo()
+
+
 class NoteItem(QGraphicsRectItem):
     def __init__(self, roll, note):
         self.roll, self.note = roll, note
@@ -45,93 +70,34 @@ class NoteItem(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setToolTip("%s · velocity %d" % (note_name(note.pitch), note.velocity))
         self.before = None
+        self.label = QGraphicsSimpleTextItem(self)
+        self.label.setBrush(QBrush(QColor("#141b27")))
+        self.label.setPos(3, 0)
+        self.label.setAcceptedMouseButtons(Qt.NoButton)
+        self.update_visual()
 
-    def paint(self, painter, option, widget=None):
-        r = self.roll
-        note = self.note
+    def update_visual(self, sounding=False):
+        r, note = self.roll, self.note
         index = list(r.song.parts).index(note.part) % 6
         motor = r.allocation.assignments.get(note.id) if r.allocation else None
         skipped = r.allocation.skipped.get(note.id) if r.allocation else None
-        color = QColor(MOTOR_COLORS[motor if motor is not None else index])
-        if skipped:
-            color = QColor("#9a5964")
+        color = QColor("#9a5964" if skipped else MOTOR_COLORS[motor if motor is not None else index])
         if r.current_part and note.part != r.current_part:
-            color.setAlpha(65)
-        sounding = False
-        if r.allocation:
-            sounding = any(
-                uid == note.id and start <= r.position_ms < end
-                for start, end, m, uid, p in r.allocation.segments
-            )
-        painter.setPen(
-            QPen(
-                QColor("#ffffff") if self.isSelected() or sounding else color.lighter(120),
-                2 if sounding else 1,
-            )
-        )
-        painter.setBrush(color.lighter(130) if sounding else color)
-        painter.drawRoundedRect(self.rect(), 2, 2)
-        if self.rect().width() > 32:
-            painter.setPen(QColor("#141b27"))
-            label = note_name(note.pitch) + (" M%d" % (motor + 1) if motor is not None else "")
-            painter.drawText(self.rect().adjusted(3, 0, -1, 0), Qt.AlignVCenter, label)
-        if skipped:
-            painter.setPen(QPen(QColor("#ffb7b7"), 1))
-            painter.drawLine(self.rect().topLeft(), self.rect().bottomRight())
+            color.setAlpha(110)
+        # Native Qt brushes also render in Nuitka/PySide2, where Python paint
+        # overrides on QGraphicsRectItem may be skipped.
+        self.setPen(QPen(QColor("#ffffff") if self.isSelected() or sounding else color.lighter(120),
+                         2 if sounding else 1))
+        self.setBrush(QBrush(color.lighter(130) if sounding else color))
+        self.label.setText(note_name(note.pitch) + (" M%d" % (motor + 1) if motor is not None else ""))
+        self.label.setVisible(self.rect().width() >= self.label.boundingRect().width() + 6)
 
-    def mousePressEvent(self, event):
-        if self.roll.read_only:
-            event.ignore()
-            return
-        super().mousePressEvent(event)
-        self.before = copy.deepcopy(self.roll.song.notes)
-        self.anchor = event.scenePos()
-        self.resize = event.pos().x() > self.rect().width() - 9
-        self.orig = (self.note.start, self.note.pitch, self.note.duration)
-        self.drag_notes = [
-            (item.note, item.note.start, item.note.pitch)
-            for item in self.roll.scene().selectedItems()
-            if isinstance(item, NoteItem)
-        ]
-
-    def mouseMoveEvent(self, event):
-        if self.before is None:
-            return
-        delta = event.scenePos() - self.anchor
-        r = self.roll
-        if self.resize:
-            self.note.duration = max(
-                r.snap, round((self.orig[2] + delta.x() / r.beat_width) / r.snap) * r.snap
-            )
-            self.setRect(0, 0, self.note.duration * r.beat_width, r.row_height - 2)
-        else:
-            beats = round(delta.x() / r.beat_width / r.snap) * r.snap
-            pitches = -round(delta.y() / r.row_height)
-            beats = max(beats, -min(start for n, start, pitch in self.drag_notes))
-            pitches = max(
-                -min(p for n, s, p in self.drag_notes),
-                min(127 - max(p for n, s, p in self.drag_notes), pitches),
-            )
-            for n, start, pitch in self.drag_notes:
-                n.start = start + beats
-                n.pitch = pitch + pitches
-            for item in r.note_items:
-                item.setPos(
-                    r.key_width + item.note.start * r.beat_width,
-                    (127 - item.note.pitch) * r.row_height + 1,
-                )
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        if self.before is not None:
-            before = self.before
-            self.before = None
-            if before != self.roll.song.notes:
-                self.roll.commit(before, "Длительность" if self.resize else "Перемещение нот")
 
 
 class PianoRoll(QGraphicsView):
     edited = Signal()
+    cursor_changed = Signal(float)
+    zoom_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -147,8 +113,11 @@ class PianoRoll(QGraphicsView):
         self.position_ms = -1
         self.playhead_beat = 0
         self.read_only = False
-        self.undo_stack = QUndoStack(self)
+        self.undo_stack = EditHistory()
         self.note_items = []
+        self.seeking = False
+        self.note_drag = None
+        self.scene().selectionChanged.connect(self.refresh_notes)
 
     def set_song(self, song):
         self.song = song
@@ -162,8 +131,9 @@ class PianoRoll(QGraphicsView):
         )
 
     def rebuild(self):
-        self.scene().clear()
+        self.note_drag = None
         self.note_items = []
+        self.scene().clear()
         if not self.song:
             return
         self.scene().setSceneRect(
@@ -244,10 +214,94 @@ class PianoRoll(QGraphicsView):
         p.setPen(QPen(QColor("#eff6ff"), 1.6))
         p.drawLine(int(x), int(top + 20), int(x), int(rect.bottom()))
 
+    def seek_cursor(self, pos):
+        beat = max(0, (self.mapToScene(pos).x() - self.key_width) / self.beat_width)
+        beat = min(self.song.end, round(beat / self.snap) * self.snap)
+        self.set_playhead(beat, -1)
+        self.cursor_changed.emit(beat)
+
+    def mousePressEvent(self, event):
+        if (event.button() == Qt.LeftButton and self.song and not self.read_only
+                and event.pos().y() < 20 and event.pos().x() >= self.key_width):
+            self.seeking = True
+            self.seek_cursor(event.pos())
+            event.accept()
+            return
+        if event.button() == Qt.LeftButton and self.song and not self.read_only and event.pos().x() >= self.key_width:
+            item = self.note_at(event.pos())
+            if item is not None:
+                if event.modifiers() & Qt.ControlModifier:
+                    item.setSelected(not item.isSelected())
+                elif not item.isSelected():
+                    self.scene().clearSelection()
+                    item.setSelected(True)
+                if item.isSelected():
+                    self.note_drag = dict(item=item, before=copy.deepcopy(self.song.notes),
+                        anchor=self.mapToScene(event.pos()), duration=item.note.duration,
+                        resize=item.mapFromScene(self.mapToScene(event.pos())).x() > item.rect().width() - 9,
+                        notes=[(i.note, i.note.start, i.note.pitch) for i in self.note_items if i.isSelected()])
+                self.setFocus()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.seeking:
+            self.seek_cursor(event.pos())
+            event.accept()
+            return
+        drag = self.note_drag
+        if drag is not None:
+            delta = self.mapToScene(event.pos()) - drag['anchor']
+            item = drag['item']
+            if drag['resize']:
+                item.note.duration = max(self.snap, round((drag['duration'] + delta.x() / self.beat_width) / self.snap) * self.snap)
+                item.setRect(0, 0, item.note.duration * self.beat_width, self.row_height - 2)
+            else:
+                beats = max(round(delta.x() / self.beat_width / self.snap) * self.snap,
+                            -min(start for n, start, pitch in drag['notes']))
+                pitches = max(-min(p for n, s, p in drag['notes']),
+                              min(127 - max(p for n, s, p in drag['notes']), -round(delta.y() / self.row_height)))
+                for note, start, pitch in drag['notes']:
+                    note.start, note.pitch = start + beats, pitch + pitches
+                for i in self.note_items:
+                    i.setPos(self.key_width + i.note.start * self.beat_width, (127 - i.note.pitch) * self.row_height + 1)
+            self.refresh_notes()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.seeking:
+            self.seeking = False
+            event.accept()
+            return
+        if self.note_drag is not None:
+            drag, self.note_drag = self.note_drag, None
+            if drag['before'] != self.song.notes:
+                selected = {i.note.id for i in self.note_items if i.isSelected()}
+                self.commit(drag['before'], "Длительность" if drag['resize'] else "Перемещение нот")
+                for item in self.note_items:
+                    item.setSelected(item.note.id in selected)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def note_at(self, pos):
+        scene_pos = self.mapToScene(pos)
+        # Keep the Python instances: compiled Qt item lookup may return base wrappers.
+        return next((item for item in reversed(self.note_items)
+                     if item.contains(item.mapFromScene(scene_pos))), None)
+
     def mouseDoubleClickEvent(self, event):
         if self.read_only or not self.song:
             return
-        item = self.itemAt(event.pos())
+        if event.pos().y() < 20:
+            if event.pos().x() >= self.key_width:
+                self.seek_cursor(event.pos())
+            return
+        self.note_drag = None
+        item = self.note_at(event.pos())
         if isinstance(item, NoteItem):
             value, ok = QInputDialog.getInt(
                 self, "Velocity", "Громкость MIDI (не ток двигателя)", item.note.velocity, 1, 127
@@ -257,7 +311,7 @@ class PianoRoll(QGraphicsView):
                 item.note.velocity = value
                 self.commit(before, "Velocity")
             return
-        if not self.current_part:
+        if self.current_part is None:
             return
         pos = self.mapToScene(event.pos())
         if event.pos().x() < self.key_width:
@@ -286,7 +340,7 @@ class PianoRoll(QGraphicsView):
             self.undo_stack.redo()
             return
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
-            ids = {i.note.id for i in self.scene().selectedItems() if isinstance(i, NoteItem)}
+            ids = {i.note.id for i in self.note_items if i.isSelected()}
             if ids:
                 before = copy.deepcopy(self.song.notes)
                 self.song.notes = [n for n in self.song.notes if n.id not in ids]
@@ -294,14 +348,43 @@ class PianoRoll(QGraphicsView):
             return
         super().keyPressEvent(event)
 
-    def set_zoom(self, value):
+    def set_zoom(self, value, anchor=None):
+        value = max(25, min(180, int(value)))
+        if value == self.beat_width:
+            return
+        anchor = anchor if anchor is not None else self.viewport().rect().center()
+        before = self.mapToScene(anchor)
+        beat = (before.x() - self.key_width) / self.beat_width
+        selected = {i.note.id for i in self.note_items if i.isSelected()}
         self.beat_width = value
         self.rebuild()
+        for item in self.note_items:
+            item.setSelected(item.note.id in selected)
+        after = self.mapToScene(anchor)
+        bar = self.horizontalScrollBar()
+        bar.setValue(bar.value() + round(self.key_width + beat * value - after.x()))
+        self.zoom_changed.emit(value)
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta:
+                self.set_zoom(round(self.beat_width * 1.15 ** (delta / 120)), event.pos())
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def refresh_notes(self):
+        sounding = {uid for start, end, motor, uid, pitch in self.allocation.segments
+                    if start <= self.position_ms < end} if self.allocation else set()
+        for item in self.note_items:
+            item.update_visual(item.note.id in sounding)
+        self.viewport().update()
 
     def set_playhead(self, beat, ms):
         self.playhead_beat = beat
         self.position_ms = ms
-        self.viewport().update()
+        self.refresh_notes()
 
     def set_allocation(self, allocation):
         self.allocation = allocation
@@ -317,4 +400,4 @@ class PianoRoll(QGraphicsView):
                     reason,
                 )
             )
-        self.viewport().update()
+        self.refresh_notes()

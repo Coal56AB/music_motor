@@ -5,8 +5,20 @@ QLabel#title { font-size:27px; font-weight:700; color:#eff5ff; }
 QLabel#subtitle { color:#90a3bc; }
 QFrame#motorCard { background:#1a2637; border:1px solid #314057; border-radius:9px; }
 QFrame#motorCard QLabel, QFrame#motorCard QCheckBox { background:transparent; }
-QFrame#motorCard QPushButton { min-height:16px; padding:3px 7px; }
-QFrame#motorCard QComboBox,QFrame#motorCard QDoubleSpinBox { min-height:16px; padding:3px; }
+QFrame#motorCard QPushButton { min-height:26px; padding:5px 8px; font-size:14px; }
+QFrame#motorCard QComboBox,QFrame#motorCard QDoubleSpinBox { min-height:26px; padding:5px; font-size:15px; }
+QFrame#motorCard QCheckBox { min-height:32px; spacing:9px; font-size:15px; }
+QFrame#motorCard QCheckBox::indicator { width:22px; height:22px; border:1px solid #8498b1; border-radius:3px; background:#111c2d; }
+QFrame#motorCard QCheckBox::indicator:checked { background:#63dbc0; border-color:#a2f2df; }
+QFrame#motorCard QPushButton#motorStep { min-height:34px; padding:6px 10px; font-size:17px; font-weight:600; }
+QFrame#motorCard QPushButton#motorStep:enabled { background:#347964; border-color:#5bb99b; }
+QFrame#motorCard QPushButton#motorStep:checked:enabled { background:#493443; border-color:#8d5a70; }
+QGroupBox#commonSignals { font-size:14px; }
+QGroupBox#commonSignals QCheckBox { font-size:14px; spacing:8px; }
+QGroupBox#commonSignals QCheckBox::indicator { width:20px; height:20px; border:1px solid #8498b1; border-radius:3px; background:#111c2d; }
+QGroupBox#commonSignals QCheckBox::indicator:checked { background:#63dbc0; border-color:#a2f2df; }
+QGroupBox#commonSignals QPushButton,QGroupBox#commonSignals QComboBox,QGroupBox#commonSignals QSpinBox { min-height:28px; font-size:14px; }
+QGroupBox#commonSignals QPushButton[commonAction="true"] { min-height:28px; font-size:14px; font-weight:600; }
 QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox { background:#111c2d; border:1px solid #3a4b64; border-radius:4px; padding:4px; min-height:20px; }
 QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus { border-color:#6dd6bf; }
 QPushButton { background:#273a52; border:1px solid #405673; border-radius:5px; padding:6px 11px; min-height:20px; }

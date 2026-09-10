@@ -1,6 +1,7 @@
 import copy
 import datetime
 import struct
+import time
 from pathlib import Path
 from PySide2.QtCore import Qt, QTimer, QObject, QThread, Signal
 from PySide2.QtWidgets import (
@@ -30,19 +31,22 @@ from PySide2.QtWidgets import (
     QFormLayout,
     QLineEdit,
     QInputDialog,
+    QShortcut,
 )
 from serial.tools import list_ports
 from app.settings import load_settings, save_settings, ROOT
-from app.music_math import MICROSTEPS, note_name
-from app.playback import StreamPlayer
+from app.music_math import MICROSTEPS, note_name, note_frequency
+from app.playback import StreamPlayer, short_gap_note
 from app.theme import STYLE
 from widgets.motor_card import MotorCard
+from widgets.midi_overview import MidiOverview
 from widgets.piano_roll import PianoRoll, NoteItem
 from protocol.client import Client
 from protocol.wire import Command as C, Error
 from midi.model import load_midi, save_midi, demo_song, save_project, load_project, Part, Song, Note
 from midi.allocator import allocate, STRATEGIES, MOTOR_COLORS
 from audio.transcribe import transcribe
+from audio.preview import PreviewPlayer, preview_notes
 
 
 def button(text, slot, kind=None):
@@ -98,6 +102,12 @@ class MainWindow(QMainWindow):
         self.audio_song = None
         self.client = Client(self)
         self.player = StreamPlayer(self.client, self)
+        self.preview = PreviewPlayer(self)
+        self.preview_cursor_beat = 0.0
+        self.main_cursor_ms = 0
+        self.direction_epoch = 0
+        self.direction_motor_epochs = [0] * 6
+        self.direction_restart = [False] * 6
         self.song = demo_song()
         outer = QWidget()
         self.setCentralWidget(outer)
@@ -114,7 +124,7 @@ class MainWindow(QMainWindow):
         head.addLayout(heading, 1)
         self.connection_label = QLabel("○ Отключено")
         head.addWidget(self.connection_label)
-        head.addWidget(button("■  STOP ALL", lambda: self.player.stop(True), "danger"))
+        head.addWidget(button("■  STOP ALL", self.stop_all, "danger"))
         root.addLayout(head)
         link = QHBoxLayout()
         self.ports = QComboBox()
@@ -152,9 +162,13 @@ class MainWindow(QMainWindow):
         self.client.log.connect(self.append_log)
         self.client.fault.connect(self.show_error)
         self.client.connection.connect(self.on_connection)
+        self.client.fault.connect(lambda *_args: self.cancel_direction_restart())
         self.player.changed.connect(self.player_state)
         self.player.progress.connect(self.on_progress)
         self.player.failed.connect(self.show_error)
+        self.preview.changed.connect(self.preview_state)
+        self.preview.progress.connect(self.preview_progress)
+        self.preview.failed.connect(lambda message: self.statusBar().showMessage(message, 10000))
         self.set_song(self.song)
         self.refresh_ports()
         self.on_connection(False)
@@ -173,7 +187,9 @@ class MainWindow(QMainWindow):
 
     def build_motors(self):
         page, root = self.page("Двигатели / Отладка")
-        scroll = QScrollArea()
+        scroll = self.motor_scroll = QScrollArea()
+        self.midi_overview = MidiOverview()
+        self.midi_overview.seek_requested.connect(lambda *_args: self.seek_main_cursor(self.midi_overview.position_ms))
         scroll.setWidgetResizable(True)
         content = QWidget()
         grid = self.motor_grid = QGridLayout(content)
@@ -188,38 +204,52 @@ class MainWindow(QMainWindow):
         self.layout_motors()
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
+        transport = QHBoxLayout()
+        self.main_play_button = button("▶ Мелодия", lambda *_args: self.toggle_main_playback(), "primary")
+        self.main_stop_button = button("■ Стоп", lambda *_args: self.stop_all())
+        self.main_song_label = QLabel()
+        self.main_play_button.setToolTip("Воспроизвести текущую мелодию на двигателях / пауза")
+        transport.addWidget(self.main_play_button)
+        transport.addWidget(self.main_stop_button)
+        transport.addWidget(self.main_song_label, 1)
+        root.addLayout(transport)
+        root.addWidget(self.midi_overview, 1)
         self.common = QGroupBox("Общие сигналы для ВСЕХ шести драйверов")
-        row = QHBoxLayout(self.common)
+        self.common.setObjectName("commonSignals")
+        row = QGridLayout(self.common)
+        row.setHorizontalSpacing(10)
         self.micro = QComboBox()
         for name, (raw, factor) in MICROSTEPS.items():
             self.micro.addItem(name, (raw, factor))
-        self.micro.addItem("Сырая комбинация", None)
-        self.raw = spin(0, 7, self.config["microstep_raw"])
-        self.raw.setPrefix("MS = ")
-        self.raw.setToolTip("Бит 0 = MS1, бит 1 = MS2, бит 2 = MS3")
-        self.micro.activated.connect(self.micro_selected)
+        self.micro.activated[int].connect(lambda *_args: self.micro_selected())
         current = next(
             (
                 i
-                for i in range(self.micro.count() - 1)
+                for i in range(self.micro.count())
                 if self.micro.itemData(i)[0] == self.config["microstep_raw"]
             ),
-            self.micro.count() - 1,
+            0,
         )
         self.micro.setCurrentIndex(current)
         self.sleep = QCheckBox("SLEEP активен")
         self.reset = QCheckBox("RESET активен")
         self.sleep.clicked.connect(self.sleep_clicked)
         self.reset.clicked.connect(self.reset_clicked)
-        for w in [
-            self.micro,
-            self.raw,
-            button("Применить MS", self.apply_micro),
-            self.sleep,
-            self.reset,
-            button("RESET PULSE", lambda: self.common_command(C.RESET_PULSE, None)),
-        ]:
-            row.addWidget(w)
+        self.reset_button = button("RESET", self.reset_drivers)
+        self.reset_button.setToolTip("Остановить все STEP, выключить все ENABLE и включить общий RESET.")
+        self.activate_button = button("ACTIVATE", self.activate_drivers, "primary")
+        self.reset_button.setProperty("commonAction", True)
+        self.activate_button.setProperty("commonAction", True)
+        self.activate_button.setToolTip("Снять общие RESET и SLEEP. ENABLE и STEP включаются отдельно.")
+        self.reset_button.setMinimumHeight(36)
+        self.activate_button.setMinimumHeight(36)
+        self.reset_button.setMinimumWidth(110)
+        self.activate_button.setMinimumWidth(120)
+        for column, w in enumerate((self.micro, self.sleep, self.reset, self.reset_button, self.activate_button)):
+            row.addWidget(w, 0, column)
+        row.setColumnStretch(0, 1)
+        row.setContentsMargins(12, 6, 12, 8)
+        self.common_manual_controls = [self.micro, self.sleep, self.reset]
         root.addWidget(self.common)
         hint = QLabel(
             "A4988: полный / ½ / ¼ / ⅛ / ¹⁄₁₆. Таблицу конкретного HR4998 сверьте с документацией модуля. RPM — расчёт, датчика вращения нет."
@@ -230,6 +260,10 @@ class MainWindow(QMainWindow):
 
     def build_editor(self):
         page, root = self.page("MIDI-редактор")
+        self.preview_shortcut = QShortcut("Space", page)
+        self.preview_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self.preview_shortcut.setAutoRepeat(False)
+        self.preview_shortcut.activated.connect(self.toggle_preview)
         tools = QHBoxLayout()
         for text, slot in [
             ("Открыть MIDI", self.open_midi),
@@ -241,6 +275,40 @@ class MainWindow(QMainWindow):
         tools.addWidget(button("Экспорт для моторов", self.export_arrangement))
         tools.addStretch()
         root.addLayout(tools)
+        self.preview_controls = QWidget()
+        listen = QHBoxLayout(self.preview_controls)
+        listen.setContentsMargins(0, 0, 0, 0)
+        self.listen_button = button("▶ Слушать на ПК", self.listen, "primary")
+        self.listen_pause = button("Ⅱ Пауза", self.preview.pause_resume)
+        self.listen_stop = button("■ Стоп", self.preview.stop)
+        self.listen_mode = QComboBox()
+        self.listen_mode.addItems(["Все ноты MIDI", "Как распределено по моторам"])
+        self.listen_mode.setToolTip(
+            "Все ноты: включённые партии, без ограничения числа голосов.\n"
+            "По моторам: с пропусками, переносом октав и прерываниями.\n"
+            "Простой синтезированный тембр для проверки нот; без GM-инструментов.")
+        self.listen_mode.currentIndexChanged.connect(lambda *_args: self.preview.stop())
+        self.listen_seek = QSlider(Qt.Horizontal)
+        self.listen_seek.setRange(0, 1000)
+        self.listen_seek.setMinimumWidth(90)
+        self.listen_seek.sliderReleased.connect(self.seek_preview_slider)
+        self.listen_time = QLabel("00:00 / 00:00")
+        self.listen_volume = QSlider(Qt.Horizontal)
+        self.listen_volume.setRange(0, 100)
+        self.listen_volume.setValue(35)
+        self.listen_volume.setMaximumWidth(90)
+        self.listen_volume.setToolTip("Громкость звука компьютера")
+        self.listen_volume.valueChanged.connect(lambda *_args: self.preview.set_volume(self.listen_volume.value()))
+        for w in (self.listen_button, self.listen_pause, self.listen_stop, self.listen_mode):
+            listen.addWidget(w)
+        listen.addWidget(self.listen_seek, 1)
+        listen.addWidget(self.listen_time)
+        listen.addWidget(QLabel("Громкость"))
+        listen.addWidget(self.listen_volume)
+        self.listen_pause.setEnabled(False)
+        self.listen_stop.setEnabled(False)
+        self.listen_seek.setEnabled(False)
+        root.addWidget(self.preview_controls)
         split = QSplitter(Qt.Horizontal)
         left = QWidget()
         ll = QVBoxLayout(left)
@@ -268,8 +336,11 @@ class MainWindow(QMainWindow):
         edit = QHBoxLayout()
         self.roll = PianoRoll()
         self.roll.edited.connect(self.on_edited)
-        edit.addWidget(button("↶ Undo", self.roll.undo_stack.undo))
-        edit.addWidget(button("↷ Redo", self.roll.undo_stack.redo))
+        self.roll.cursor_changed.connect(self.set_preview_cursor)
+        self.undo_button = button("↶ Undo", lambda *_args: self.roll.undo_stack.undo())
+        self.redo_button = button("↷ Redo", lambda *_args: self.roll.undo_stack.redo())
+        edit.addWidget(self.undo_button)
+        edit.addWidget(self.redo_button)
         self.snap = QComboBox()
         for name, value in [("1/4", 1), ("1/8", 0.5), ("1/16", 0.25), ("1/32", 0.125)]:
             self.snap.addItem(name, value)
@@ -285,12 +356,13 @@ class MainWindow(QMainWindow):
         zoom.setValue(76)
         zoom.setMaximumWidth(140)
         zoom.valueChanged.connect(self.roll.set_zoom)
+        self.roll.zoom_changed.connect(zoom.setValue)
         edit.addWidget(QLabel("Масштаб"))
         edit.addWidget(zoom)
         rl.addLayout(edit)
         rl.addWidget(self.roll, 1)
         hint = QLabel(
-            "Двойной щелчок: добавить / velocity · перетащить: переместить · правый край: длительность · Delete: удалить"
+            "Линейка времени: курсор · Пробел: слушать / пауза · Двойной щелчок: добавить / velocity · Перетащить: переместить · Правый край: длительность · Delete: удалить"
         )
         hint.setWordWrap(True)
         hint.setObjectName("subtitle")
@@ -334,12 +406,21 @@ class MainWindow(QMainWindow):
         self.sensitivity.setSingleStep(0.05)
         self.sensitivity.setValue(0.25)
         form.addRow("Порог (меньше → больше нот)", self.sensitivity)
-        self.audio_low = spin(0, 127, 36)
-        self.audio_high = spin(0, 127, 96)
+        self.audio_low, self.audio_high = QComboBox(), QComboBox()
+        names = ("до", "до♯", "ре", "ре♯", "ми", "фа", "фа♯", "соль", "соль♯", "ля", "ля♯", "си")
+        for control, default in ((self.audio_low, 36), (self.audio_high, 96)):
+            for n in range(128):
+                control.addItem("%s · %s · %s Гц" %
+                                (note_name(n), names[n % 12], ("%.2f" % note_frequency(n)).replace('.', ',')), n)
+            control.setCurrentIndex(control.findData(default))
         limits = QHBoxLayout()
+        limits.addWidget(QLabel("От"))
         limits.addWidget(self.audio_low)
+        limits.addWidget(QLabel("до"))
         limits.addWidget(self.audio_high)
-        form.addRow("Диапазон MIDI min / max", limits)
+        limits.setStretch(1, 1)
+        limits.setStretch(3, 1)
+        form.addRow("Диапазон распознаваемых нот", limits)
         root.addLayout(form)
         actions = QHBoxLayout()
         self.analyze_button = button("Распознать ноты", self.analyze_audio, "primary")
@@ -375,12 +456,10 @@ class MainWindow(QMainWindow):
         form.addRow("Темп (сохраняет изменения темпа MIDI)", self.tempo)
         self.transpose = spin(-48, 48, 0)
         form.addRow("Транспонирование композиции", self.transpose)
-        self.low_hz = spin(20, 4000, self.config["min_frequency"])
-        self.high_hz = spin(20, 4000, self.config["max_frequency"])
-        limits = QHBoxLayout()
-        limits.addWidget(self.low_hz)
-        limits.addWidget(self.high_hz)
-        form.addRow("Диапазон STEP, Гц min / max", limits)
+        self.low_hz = spin(20, self.config['max_frequency'] - 1, self.config["min_frequency"])
+        self.high_hz = spin(self.config['min_frequency'] + 1, 4000, self.config["max_frequency"])
+        self.low_hz.valueChanged.connect(lambda *_: self.high_hz.setMinimum(self.low_hz.value() + 1))
+        self.high_hz.valueChanged.connect(lambda *_: self.low_hz.setMaximum(self.high_hz.value() - 1))
         self.octave = QCheckBox("Переносить недоступные ноты по октавам")
         self.octave.setChecked(True)
         form.addRow(self.octave)
@@ -458,6 +537,28 @@ class MainWindow(QMainWindow):
         root.setSpacing(12)
         scroll.setWidget(content)
         page_layout.addWidget(scroll)
+        appearance = QGroupBox("Отображение двигателей")
+        appearance_form = QFormLayout(appearance)
+        self.motor_layout = QComboBox()
+        self.motor_layout.addItem("Горизонтальный", "horizontal")
+        self.motor_layout.addItem("Вертикальный", "vertical")
+        self.motor_layout.setCurrentIndex(self.motor_layout.findData(self.config.get("motor_layout", "horizontal")))
+        self.motor_layout.activated[int].connect(lambda *_: self.change_motor_layout())
+        appearance_form.addRow("Вид карточек", self.motor_layout)
+        self.note_hold = spin(0, 5000, self.config.get('note_hold_ms', 250))
+        self.note_hold.setSuffix(" мс")
+        self.note_hold.setSingleStep(50)
+        self.note_hold.setToolTip("Паузы не длиннее порога скрываются по данным MIDI. Более длинные гасят индикацию сразу. 0 — показывать все паузы.")
+        appearance_form.addRow("Скрывать паузы MIDI до", self.note_hold)
+        self.low_hz.setSuffix(' Гц')
+        self.high_hz.setSuffix(' Гц')
+        limits = QHBoxLayout()
+        limits.addWidget(QLabel('От'))
+        limits.addWidget(self.low_hz)
+        limits.addWidget(QLabel('до'))
+        limits.addWidget(self.high_hz)
+        appearance_form.addRow('Диапазон частоты', limits)
+        root.addWidget(appearance)
         self.motor_settings = QGroupBox("Используемые двигатели")
         motor_form = QGridLayout(self.motor_settings)
         for col, title in enumerate(["Использовать", "Название", "Полных шагов / оборот", "Направление"]):
@@ -489,9 +590,6 @@ class MainWindow(QMainWindow):
         form = QFormLayout(playback_group)
         form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         form.setSpacing(10)
-        self.micro_factor = spin(1, 256, self.config["microstep"])
-        self.micro_factor.setFixedWidth(115)
-        form.addRow("Множитель микрошагов для расчёта RPM", self.micro_factor)
         self.lookahead = spin(500, 10000, self.config["lookahead_ms"])
         self.lookahead.setSuffix(" мс")
         self.lookahead.setFixedWidth(115)
@@ -548,6 +646,7 @@ class MainWindow(QMainWindow):
                     self.client.send(C.DIR, bytes([i, direction]))
 
     def on_connection(self, connected):
+        self.cancel_direction_restart()
         self.connection_label.setText(
             "● СИМУЛЯТОР"
             if connected and self.client.sim
@@ -589,18 +688,33 @@ class MainWindow(QMainWindow):
 
     def refresh_cards(self):
         playing = self.player.state in ("preparing", "playing", "paused")
+        self.main_play_button.setText({"stopped": "▶ Мелодия", "preparing": "Подготовка…",
+                                       "playing": "Ⅱ Пауза", "paused": "▶ Продолжить"}[self.player.state])
+        self.main_play_button.setEnabled(self.client.connected and self.player.state != "preparing")
+        self.main_stop_button.setEnabled(self.client.connected)
         self.motor_settings.setEnabled(not playing)
         self.save_settings_button.setEnabled(not playing)
+        self.low_hz.setEnabled(not playing)
+        self.high_hz.setEnabled(not playing)
         for card in self.cards:
-            card.update_status(self.latest_status, self.client.connected, self.link_error, playing)
+            gap_note = short_gap_note(self.player.allocation.segments, card.index, self.player.position,
+                                      self.config.get('note_hold_ms', 250)) if self.player.state == 'playing' and self.player.allocation else None
+            card.update_status(self.latest_status, self.client.connected, self.link_error, playing,
+                               self.player.state == 'playing', gap_note)
+            if self.player.state == 'preparing':
+                card.direction.setEnabled(False)
         for i, label in enumerate(self.voice_labels):
             label.setVisible(bool(self.config["installed_mask"] & (1 << i)))
-        self.common.setEnabled(self.client.connected and not playing)
+        for control in self.common_manual_controls:
+            control.setEnabled(self.client.connected and not playing)
+        self.reset_button.setEnabled(self.client.connected)
+        self.activate_button.setEnabled(self.client.connected and not playing)
 
     def manual_command(self, m, command, value):
+        self.cancel_direction_restart(m, command == 'direction')
         if not self.config["installed_mask"] & (1 << m):
             return
-        if self.player.state in ("playing", "preparing", "paused"):
+        if self.player.state in ("playing", "preparing", "paused") and command != "direction":
             if command == "stop":
                 self.player.stop()
             return
@@ -617,11 +731,77 @@ class MainWindow(QMainWindow):
         elif command == "direction":
             self.config["directions"][m] = value
             self.direction_settings[m].setCurrentIndex(value)
-            self.client.send(C.STOP, bytes([m]))
-            self.client.send(C.DIR, bytes([m, value]))
+            self.change_direction(m, value)
+
+    def cancel_direction_restart(self, motor=None, preserve=False):
+        if motor is None:
+            self.direction_epoch += 1
+            self.direction_restart = [False] * 6
+        else:
+            self.direction_motor_epochs[motor] += 1
+            if not preserve:
+                self.direction_restart[motor] = False
+
+    def change_direction(self, motor, direction):
+        from protocol.wire import decode_status
+        epoch = self.direction_epoch
+        motor_epoch = self.direction_motor_epochs[motor]
+        def valid():
+            return epoch == self.direction_epoch and motor_epoch == self.direction_motor_epochs[motor]
+        if self.player.state in ('playing', 'paused'):
+            resume = self.player.state == 'playing'
+            self.player.pause()
+            player_epoch = self.player.epoch
+            self.player.config['directions'] = list(self.config['directions'])
+            def changed(_data):
+                if resume and valid() and player_epoch == self.player.epoch:
+                    self.player.resume()
+            self.client.send(C.DIR, bytes([motor, direction]), callback=changed)
+            return
+        if self.player.state != 'stopped':
+            return
+
+        def stopped_status(data):
+            if not valid():
+                return
+            was_active = decode_status(data)['motors'][motor]['active'] or self.direction_restart[motor]
+            self.direction_restart[motor] = was_active
+            self.client.send(C.STOP, bytes([motor]))
+            def changed(_data):
+                if not was_active:
+                    return
+                ready_at = time.monotonic() + 0.005
+                def restart():
+                    if (valid() and self.client.connected
+                            and self.player.state == 'stopped'):
+                        if time.monotonic() < ready_at:
+                            QTimer.singleShot(5, restart)
+                            return
+                        self.direction_restart[motor] = False
+                        self.client.send(C.START, bytes([motor]))
+                QTimer.singleShot(5, restart)
+            self.client.send(C.DIR, bytes([motor, direction]), callback=changed)
+        self.client.send(C.GET_STATUS, callback=stopped_status)
 
     def common_command(self, command, value):
+        self.cancel_direction_restart()
         self.client.send(command, b"" if value is None else bytes([int(value)]))
+
+    def reset_drivers(self):
+        self.cancel_direction_restart()
+        if not self.client.connected:
+            return
+        self.preview.stop()
+        self.player.stop(disable=True)
+        self.client.send(C.RESET, b"\x01")
+        self.client.send(C.GET_STATUS, callback=self.receive_status_bytes)
+
+    def activate_drivers(self):
+        if not self.client.connected or self.player.state != "stopped":
+            return
+        self.client.send(C.RESET, b"\x00")
+        self.client.send(C.SLEEP, b"\x00")
+        self.client.send(C.GET_STATUS, callback=self.receive_status_bytes)
 
     # Read the widget directly: compiled PySide2 callbacks can lose signal arguments.
     def sleep_clicked(self, *_args):
@@ -646,14 +826,11 @@ class MainWindow(QMainWindow):
     def micro_selected(self):
         data = self.micro.currentData()
         if data:
-            self.raw.setValue(data[0])
-            self.micro_factor.setValue(data[1])
-
-    def apply_micro(self):
-        self.config["microstep_raw"] = self.raw.value()
-        self.config["microstep"] = self.micro_factor.value()
-        self.client.send(C.MICROSTEP, bytes([self.raw.value()]))
-        self.refresh_cards()
+            self.config["microstep"] = data[1]
+            self.config["microstep_raw"] = data[0]
+            if self.client.connected:
+                self.client.send(C.MICROSTEP, bytes([data[0]]))
+            self.refresh_cards()
 
     def motor_config_changed(self):
         old = self.config["installed_mask"]
@@ -667,36 +844,71 @@ class MainWindow(QMainWindow):
         for i, w in enumerate(self.direction_settings):
             value = w.currentIndex()
             if value != self.config["directions"][i] and self.client.connected and self.config["installed_mask"] & (1 << i):
-                self.client.send(C.STOP, bytes([i]))
-                self.client.send(C.DIR, bytes([i, value]))
+                self.manual_command(i, "direction", value)
             self.config["directions"][i] = value
         self.layout_motors()
         self.invalidate_allocation()
         self.refresh_cards()
 
     def layout_motors(self):
+        vertical = self.config.get("motor_layout") == "vertical"
+        self.motor_grid.setAlignment(Qt.AlignTop if vertical else Qt.Alignment())
+        self.fit_motor_height()
+        self.midi_overview.setVisible(vertical)
+        for row in range(self.motor_grid.rowCount()):
+            self.motor_grid.setRowStretch(row, 0)
+        for col in range(self.motor_grid.columnCount()):
+            self.motor_grid.setColumnStretch(col, 0)
         for card in self.cards:
             self.motor_grid.removeWidget(card)
             card.hide()
             card.name.setText(self.config["names"][card.index])
+            card.set_vertical(vertical)
         self.motor_grid.removeWidget(self.no_motors)
         self.no_motors.hide()
         used = [c for c in self.cards if self.config["installed_mask"] & (1 << c.index)]
-        columns = 3 if len(used) > 4 else min(2, max(1, len(used)))
+        columns = max(1, len(used)) if vertical else (3 if len(used) > 4 else min(2, max(1, len(used))))
         for i, card in enumerate(used):
             self.motor_grid.addWidget(card, i // columns, i % columns)
+            self.motor_grid.setColumnStretch(i % columns, 1)
+            self.motor_grid.setRowStretch(i // columns, 1)
             card.show()
         if not used:
             self.motor_grid.addWidget(self.no_motors, 0, 0)
             self.no_motors.show()
 
+    def fit_motor_height(self):
+        if self.config.get("motor_layout") == "vertical":
+            self.motor_scroll.setFixedHeight(min(502, max(200, self.height() - 400)))
+        else:
+            self.motor_scroll.setMinimumHeight(0)
+            self.motor_scroll.setMaximumHeight(16777215)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'motor_scroll'):
+            self.fit_motor_height()
+
+    def change_motor_layout(self):
+        self.config["motor_layout"] = self.motor_layout.currentData()
+        self.layout_motors()
+        save_settings(self.config, self.settings_path)
+
     def set_song(self, song):
+        self.main_cursor_ms = 0
+        self.preview_cursor_beat = 0.0
+        self.preview.stop()
+        self.preview.synth = None
+        self.preview_progress(0)
         if self.player.state != "stopped":
             self.player.stop()
         self.song = song
         self.roll.set_song(song)
+        self.roll.set_playhead(0, -1)
+        self.preview_progress(0)
         self.populate_parts()
         self.song_label.setText(song.title)
+        self.main_song_label.setText(song.title)
         self.reallocate()
 
     def populate_parts(self):
@@ -738,7 +950,7 @@ class MainWindow(QMainWindow):
         row = self.parts.currentRow()
         if row >= 0:
             self.roll.current_part = self.parts.item(row, 0).data(Qt.UserRole)
-            self.roll.viewport().update()
+            self.roll.refresh_notes()
 
     def assign_part(self, pid, motor):
         self.song.parts[pid].motor = motor
@@ -751,7 +963,7 @@ class MainWindow(QMainWindow):
     def split_part(self):
         if self.player.state != "stopped":
             return
-        selected = [i.note for i in self.roll.scene().selectedItems() if isinstance(i, NoteItem)]
+        selected = [i.note for i in self.roll.note_items if i.isSelected()]
         if not selected:
             return
         name, ok = QInputDialog.getText(self, "Новая партия", "Название")
@@ -772,17 +984,19 @@ class MainWindow(QMainWindow):
         if self.player.state != "stopped":
             return
         before = copy.deepcopy(self.song.notes)
-        for item in self.roll.scene().selectedItems():
-            if isinstance(item, NoteItem):
+        for item in self.roll.note_items:
+            if item.isSelected():
                 item.note.velocity = self.velocity.value()
         if before != self.song.notes:
             self.roll.commit(before, "Velocity")
 
     def on_edited(self):
+        self.preview.stop()
         self.allocation = None
         self.reallocate()
 
     def invalidate_allocation(self, *args):
+        self.preview.stop()
         if self.player.state == "stopped":
             self.allocation = None
 
@@ -805,6 +1019,9 @@ class MainWindow(QMainWindow):
             self.show_error(str(exc))
             return False
         self.roll.set_allocation(self.allocation)
+        self.midi_overview.set_allocation(self.allocation, self.config["installed_mask"])
+        self.main_cursor_ms = min(self.main_cursor_ms, max(0, self.allocation.duration_ms - 1))
+        self.midi_overview.set_position(self.main_cursor_ms)
         available = sum(
             bool(self.config["installed_mask"] & self.config["music_mask"] & (1 << i))
             for i in range(6)
@@ -827,7 +1044,80 @@ class MainWindow(QMainWindow):
         )
         return True
 
+    def stop_all(self):
+        self.cancel_direction_restart()
+        self.preview.stop()
+        self.player.stop(True)
+
+    def listen(self):
+        if self.player.state != "stopped":
+            return
+        if self.preview.state == 'paused':
+            self.preview.pause_resume()
+            return
+        if self.listen_mode.currentIndex() == 1 and not self.reallocate():
+            return
+        self.preview_speed = self.tempo.value() / 100
+        notes = preview_notes(self.song, self.preview_speed, self.transpose.value(),
+                              self.allocation if self.listen_mode.currentIndex() == 1 else None)
+        start_ms = round(self.song.seconds(self.preview_cursor_beat, self.preview_speed) * 1000)
+        self.preview.play(notes, start_ms)
+
+    def toggle_preview(self):
+        if self.player.state != 'stopped':
+            return
+        if self.preview.state == 'playing':
+            self.preview.pause_resume()
+        else:
+            self.listen()
+
+    def set_preview_cursor(self, beat):
+        if self.player.state != 'stopped':
+            return
+        self.preview_cursor_beat = min(self.song.end, max(0, beat))
+        ms = round(self.song.seconds(self.preview_cursor_beat, self.tempo.value() / 100) * 1000)
+        if self.preview.state != 'stopped':
+            self.preview.seek(ms)
+        else:
+            self.roll.set_playhead(self.preview_cursor_beat, -1)
+            self.preview_progress(ms)
+
+    def preview_duration(self):
+        if self.preview.state != 'stopped':
+            return self.preview.duration_ms
+        return round(self.song.seconds(self.song.end, self.tempo.value() / 100) * 1000)
+
+    def seek_preview_slider(self):
+        ms = self.listen_seek.value() * self.preview_duration() / 1000
+        self.set_preview_cursor(self.song.beat_at(ms / 1000, self.tempo.value() / 100))
+
+    def preview_state(self, state):
+        self.listen_button.setEnabled(state != 'playing')
+        self.listen_button.setText("▶ Продолжить" if state == 'paused' else "▶ Слушать на ПК")
+        self.listen_pause.setEnabled(state == 'playing')
+        self.listen_stop.setEnabled(state != 'stopped')
+        self.listen_seek.setEnabled(bool(self.song.notes))
+        if state == 'stopped':
+            self.roll.set_playhead(self.preview_cursor_beat, -1)
+
+    def preview_progress(self, ms):
+        duration = self.preview_duration()
+        if self.preview.state == 'stopped':
+            ms = round(self.song.seconds(self.preview_cursor_beat, self.tempo.value() / 100) * 1000)
+        self.listen_seek.setEnabled(duration > 0)
+        self.listen_time.setText("%02d:%02d.%03d / %02d:%02d" %
+                                 (ms // 60000, ms // 1000 % 60, ms % 1000,
+                                  duration // 60000, duration // 1000 % 60))
+        if not self.listen_seek.isSliderDown():
+            self.listen_seek.setValue(round(1000 * ms / max(1, duration)))
+        if self.preview.state != 'stopped':
+            self.midi_overview.set_position(ms)
+            self.roll.set_playhead(self.song.beat_at(ms / 1000, self.preview_speed),
+                                   ms if self.listen_mode.currentIndex() == 1 else -1)
+
     def play(self):
+        self.cancel_direction_restart()
+        self.preview.stop()
         if self.player.state == "paused":
             self.player.resume()
             return
@@ -839,7 +1129,22 @@ class MainWindow(QMainWindow):
             self.show_error("Нет нот для доступных двигателей")
             return
         self.collect_settings()
-        self.player.play(self.allocation, self.config)
+        self.player.play(self.allocation, self.config, self.main_cursor_ms)
+
+    def seek_main_cursor(self, ms):
+        self.cancel_direction_restart()
+        self.preview.stop()
+        if self.player.state == 'stopped' and not self.reallocate():
+            return
+        self.main_cursor_ms = max(0, min(ms, max(0, self.allocation.duration_ms - 1)))
+        self.player.seek(self.main_cursor_ms)
+        self.on_progress(self.main_cursor_ms, 0)
+
+    def toggle_main_playback(self):
+        if self.player.state == "playing":
+            self.pause_resume()
+        else:
+            self.play()
 
     def pause_resume(self):
         if self.player.state == "paused":
@@ -848,6 +1153,7 @@ class MainWindow(QMainWindow):
             self.player.pause()
 
     def player_state(self, state):
+        self.preview_controls.setEnabled(state == "stopped")
         self.play_state.setText(
             {
                 "stopped": "Остановлено",
@@ -872,6 +1178,7 @@ class MainWindow(QMainWindow):
         self.refresh_cards()
 
     def on_progress(self, ms, used):
+        self.midi_overview.set_position(ms)
         self.position.setText("%02d:%02d.%03d" % (ms // 60000, (ms // 1000) % 60, ms % 1000))
         self.timeline.setValue(int(1000 * ms / max(1, self.allocation.duration_ms)))
         self.roll.set_playhead(self.song.beat_at(ms / 1000, self.tempo.value() / 100), ms)
@@ -958,8 +1265,8 @@ class MainWindow(QMainWindow):
             polyphony=self.audio_poly.value(),
             sensitivity=self.sensitivity.value(),
             minimum_duration=self.minimum_duration.value(),
-            low_note=self.audio_low.value(),
-            high_note=self.audio_high.value(),
+            low_note=self.audio_low.currentData(),
+            high_note=self.audio_high.currentData(),
         )
         self.audio_worker = AudioWorker(path, options)
         self.audio_worker.moveToThread(self.audio_thread)
@@ -1022,9 +1329,8 @@ class MainWindow(QMainWindow):
             port=self.ports.currentData() or "",
             baudrate=int(self.baud.currentText()),
             steps_per_revolution=[w.value() for w in self.step_settings],
-            microstep=self.micro_factor.value(),
-            microstep_raw=self.raw.value(),
             lookahead_ms=self.lookahead.value(),
+            note_hold_ms=self.note_hold.value(),
             ffmpeg=self.ffmpeg.text(),
             basic_pitch_command=self.basic_pitch.text(),
             min_frequency=self.low_hz.value(),
@@ -1046,6 +1352,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Дождитесь окончания аудиоанализа перед закрытием.")
             event.ignore()
             return
+        self.preview.stop()
         self.player.stop(True)
         self.client.close()
         self.persist()
