@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def settings_file():
-    if "__compiled__" in globals():
+    if "__compiled__" in globals() or getattr(sys, "frozen", False):
         return Path(os.environ.get("APPDATA", str(Path.home()))) / "MusicMotorStudio" / "settings.json"
     return ROOT / "user_settings.json"
 

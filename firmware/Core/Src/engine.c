@@ -1,12 +1,32 @@
 #include "engine.h"
 #include "platform.h"
 #include <string.h>
-#include "../../../shared/note_set_wire.h"
+#include "note_set_wire.h"
 State state;
 static Event queue[NOTES_BUFFER_DEPTH];
 static uint16_t head, tail;
 static uint32_t origin, last_at, ready_at, reset_release, last_command;
 static uint8_t end_queued, pulse_pending;
+static uint8_t boot_test,boot_index;
+static uint32_t boot_at;
+static uint32_t display_until[MOTOR_COUNT];
+/* Presentation only: never extends STEP pulses or the musical note. */
+uint8_t engine_display_hold(uint8_t motor) {
+    return motor < MOTOR_COUNT && state.running && !state.sleep && !state.reset &&
+        state.motors[motor].enabled && (state.mask & (1u << motor)) &&
+        display_until[motor] > state.position;
+}
+static void preview_gap(uint8_t motor, uint32_t ended_at) {
+    for (uint16_t n=0, i=head; n<state.used; ++n, i=(i+1)%NOTES_BUFFER_DEPTH) {
+        const Event *next=&queue[i];
+        if(next->at-ended_at > 500u || next->op==2)break;
+        if(next->motor==motor && next->op==1) {
+            display_until[motor]=next->at;
+            break;
+        }
+    }
+    /* Unknown future is never guessed: without a queued next note, go dark. */
+}
 #if LIVE_MIDI_MODE
 static uint8_t midi_notes[6], midi_count, midi_pending, midi_link;
 static uint8_t midi_assignment[6]; /* Original pitches, before octave folding. */
@@ -50,6 +70,7 @@ static uint8_t closest_note(uint32_t frequency) {
     return note;
 }
 static void stop(uint8_t m) {
+    display_until[m] = 0;
     platform_stop(m);
     state.motors[m].active = 0;
 }
@@ -70,6 +91,7 @@ static void stream_stop(uint8_t disable) {
     }
 }
 void engine_estop(void) {
+    boot_test=0;
 #if LIVE_MIDI_MODE
     midi_link = midi_pending = midi_count = 0;
     memset(midi_assignment, 255, sizeof(midi_assignment));
@@ -135,13 +157,14 @@ static uint8_t status(uint8_t *out) {
 }
 uint8_t engine_command(uint8_t cmd, const uint8_t *p, uint8_t len, uint8_t *out, uint8_t *outlen) {
     static const uint8_t lengths[] = {0, 0, 0, 0, 0, 1, 2, 1,   1, 5, 2,
-                                      2, 1, 1, 1, 0, 0, 1, 255, 0, 0};
+                                      2, 1, 1, 1, 0, 0, 1, 255, 0, 0, 0};
     *outlen = 0;
-    if (cmd < 1 || cmd > 20)
+    if (cmd < 1 || cmd > 21)
         return E_COMMAND;
     if (cmd != C_EVENTS && len != lengths[cmd])
         return E_LENGTH;
     last_command = platform_ms();
+    if(boot_test && cmd!=C_PING && cmd!=C_STATUS)engine_estop();
     uint8_t motor = len ? p[0] : 0;
     if (cmd >= C_ENABLE && cmd <= C_DIR) {
         if (motor >= MOTOR_COUNT)
@@ -154,6 +177,10 @@ uint8_t engine_command(uint8_t cmd, const uint8_t *p, uint8_t len, uint8_t *out,
     if (state.running && (cmd == C_MASK || cmd == C_MS || cmd == C_STREAM_START))
         return E_STATE;
     switch (cmd) {
+    case C_BOOT_TEST:
+        engine_estop();state.sleep=state.reset=0;platform_common(state.raw,0,0);
+        boot_test=1;boot_index=0;boot_at=platform_ms()+STARTUP_DELAY_MS;ready_at=boot_at;
+        break;
     case C_PING:
         out[0] = 'O';
         out[1] = 'K';
@@ -388,7 +415,7 @@ void engine_tick(void) {
 #if LIVE_MIDI_MODE
     if (midi_link && now-midi_last>NS_TIMEOUT_MS) {engine_fault(E_TIMEOUT);return;}
     if (midi_pending && (int32_t)(now-ready_at)>=0) midi_apply();
-    return;
+    if (midi_link) return;
 #endif
     if (pulse_pending && (int32_t)(now - reset_release) >= 0) {
         pulse_pending = 0;
@@ -399,8 +426,24 @@ void engine_tick(void) {
     uint8_t any = state.running;
     for (uint8_t i = 0; i < MOTOR_COUNT; i++)
         any |= state.motors[i].enabled;
-    if (any && now - last_command > LINK_TIMEOUT_MS) {
+    if (any && !boot_test && now - last_command > LINK_TIMEOUT_MS) {
         engine_fault(E_TIMEOUT);
+        return;
+    }
+    if(boot_test) {
+        static const uint8_t chord[6]={48,52,55,60,64,67};
+        if((int32_t)(now-boot_at)>=0) {
+            if(boot_index==6)engine_estop();
+            else {
+                unsigned m=boot_index++;
+                if(state.mask&(1u<<m)) {
+                    state.motors[m].enabled=1;platform_enable(m,1);
+                    state.motors[m].note=chord[m];state.motors[m].frequency=note_mhz(chord[m]);
+                    uint8_t err=start(m);if(err){engine_fault(err);return;}
+                }
+                boot_at=now+(boot_index==6?1000u:200u);
+            }
+        }
         return;
     }
     if (!state.running || (int32_t)(now - origin) < 0)
@@ -414,9 +457,12 @@ void engine_tick(void) {
             stream_stop(0);
             return;
         }
-        if (e.op == 0)
+        if (e.op == 0) {
+            uint8_t was_active=state.motors[e.motor].active;
             stop(e.motor);
-        else {
+            if(was_active)preview_gap(e.motor,e.at);
+        } else {
+            display_until[e.motor]=0;
             state.motors[e.motor].frequency = period_frequency(frequency_period(e.value));
             state.motors[e.motor].note = closest_note(e.value);
             uint8_t error = start(e.motor);

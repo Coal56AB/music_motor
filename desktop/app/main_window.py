@@ -37,6 +37,7 @@ from serial.tools import list_ports
 from app.settings import load_settings, save_settings, ROOT
 from app.music_math import MICROSTEPS, note_name, note_frequency
 from app.playback import StreamPlayer, short_gap_note
+from app.device_songs import DeviceSongs
 from app.theme import STYLE
 from widgets.motor_card import MotorCard
 from widgets.midi_overview import MidiOverview
@@ -102,6 +103,12 @@ class MainWindow(QMainWindow):
         self.audio_song = None
         self.client = Client(self)
         self.player = StreamPlayer(self.client, self)
+        self.player.before_start = self.update_device_screen
+        self.screen_action_ack = 0
+        self.screen_timer = QTimer(self)
+        self.screen_timer.timeout.connect(self.update_device_screen)
+        self.screen_timer.start(100)
+        self.client.connection.connect(lambda _: setattr(self, 'screen_action_ack', 0))
         self.preview = PreviewPlayer(self)
         self.preview_cursor_beat = 0.0
         self.main_cursor_ms = 0
@@ -477,9 +484,20 @@ class MainWindow(QMainWindow):
         self.pause_button = button("Ⅱ Пауза", self.pause_resume)
         row.addWidget(self.pause_button)
         row.addWidget(button("■ Стоп", lambda: self.player.stop()))
+        self.device_slot=QComboBox()
+        self.device_slot.addItems(['Место %d'%i for i in range(1,5)])
+        row.addWidget(self.device_slot)
+        self.device_save_button=button("Сохранить в устройство",self.save_device_song)
+        row.addWidget(self.device_save_button)
         row.addStretch()
         root.addLayout(row)
         self.position = QLabel("00:00.000")
+        self.device_save_progress=QProgressBar();self.device_save_progress.setRange(0,100)
+        self.device_save_progress.setFormat('Сохранение в устройство: %p%');root.addWidget(self.device_save_progress)
+        self.device_songs=DeviceSongs(self.client,self)
+        self.device_songs.progress.connect(self.device_save_update)
+        self.device_songs.finished.connect(self.device_save_done)
+        self.device_songs.failed.connect(self.device_save_failed)
         self.position.setStyleSheet("font-size:32px;font-weight:600")
         root.addWidget(self.position)
         self.timeline = QProgressBar()
@@ -1115,7 +1133,30 @@ class MainWindow(QMainWindow):
             self.roll.set_playhead(self.song.beat_at(ms / 1000, self.preview_speed),
                                    ms if self.listen_mode.currentIndex() == 1 else -1)
 
+    def device_save_update(self,stage,percent):
+        self.device_save_progress.setValue(percent);self.device_save_progress.setFormat(stage+' — %p%')
+
+    def device_save_done(self):
+        self.device_save_button.setEnabled(True)
+        self.statusBar().showMessage('Мелодия сохранена. Выберите её на экране устройства.',10000)
+
+    def device_save_failed(self,text):
+        self.device_save_button.setEnabled(True);self.show_error(text)
+
+    def save_device_song(self):
+        if self.player.state!='stopped':
+            self.show_error('Остановите воспроизведение перед сохранением');return
+        if not self.reallocate():return
+        if not self.allocation.assignments:
+            self.show_error('Нет нот для доступных двигателей');return
+        self.collect_settings()
+        self.device_save_button.setEnabled(False)
+        self.device_songs.start(self.allocation,self.song.title,self.device_slot.currentIndex(),self.config)
+        if not self.device_songs.active:self.device_save_button.setEnabled(True)
+
     def play(self):
+        if hasattr(self,'device_songs') and self.device_songs.active:
+            self.show_error('Дождитесь завершения сохранения');return
         self.cancel_direction_restart()
         self.preview.stop()
         if self.player.state == "paused":
@@ -1130,6 +1171,35 @@ class MainWindow(QMainWindow):
             return
         self.collect_settings()
         self.player.play(self.allocation, self.config, self.main_cursor_ms)
+
+    def update_device_screen(self, on_ready=None):
+        if self.client.sim:
+            if on_ready: on_ready()
+            return
+        if not self.client.connected or self.device_songs.active:
+            return
+        if not on_ready and ((self.client.pending and self.client.pending['command'] == C.SCREEN_SONG)
+                or any(c[0] == C.SCREEN_SONG for c in self.client.commands)):
+            return
+        duration = self.allocation.duration_ms if self.allocation else 0
+        position = self.player.position if self.player.state != 'stopped' else self.main_cursor_ms
+        flags = 1 if self.player.state == 'playing' else 2 if self.player.state == 'paused' else 0
+        title = self.song.title.encode('utf-8')[:48].decode('utf-8', 'ignore').encode('utf-8')
+        payload = struct.pack('<BBII', self.screen_action_ack, flags, int(position), int(duration)) + title
+        def accepted(data):
+            self.device_screen_action(data)
+            if on_ready: on_ready()
+        self.client.send(C.SCREEN_SONG, payload, callback=accepted)
+
+    def device_screen_action(self, data):
+        if len(data) != 7 or not data[0] or data[0] == self.screen_action_ack:
+            return
+        self.screen_action_ack = data[0]
+        action = data[1]
+        if action == 2:
+            self.seek_main_cursor(struct.unpack_from('<I', data, 3)[0])
+        elif action == 1:
+            self.toggle_main_playback()
 
     def seek_main_cursor(self, ms):
         self.cancel_direction_restart()

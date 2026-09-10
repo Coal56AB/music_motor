@@ -30,10 +30,9 @@
 
 /* Настройки связи */
 #define NOTES_BUFFER_DEPTH          256    /* При изменении согласовать с desktop. */
-/* 0 = existing desktop protocol; 1 = standalone ESP USB-MIDI.
- * Override in compiler defines. Do not connect two UART transmitters at once. */
+/* USART1 always serves the PC. Enable the independent ESP USART2 link. */
 #ifndef LIVE_MIDI_MODE
-#define LIVE_MIDI_MODE          0
+#define LIVE_MIDI_MODE          1
 #endif
 #ifndef MIDI_INSTALLED_MASK
 #define MIDI_INSTALLED_MASK     0x3fu
@@ -41,11 +40,8 @@
 #ifndef MIDI_DEBUG_GPIO
 #define MIDI_DEBUG_GPIO         0 /* PC13 toggle immediately before motor update. */
 #endif
-#if LIVE_MIDI_MODE
-#define UART_BAUD               921600u
-#else
 #define UART_BAUD               115200u
-#endif
+#define ESP_UART_BAUD           230400u
 #define UART_RING_SIZE          512u    /* Степень двойки; отдельные RX и TX. */
 #define LINK_TIMEOUT_MS         2000u
 #define FRAME_TIMEOUT_MS        100u

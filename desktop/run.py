@@ -9,9 +9,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--screenshot", help="Save a screenshot and exit (offscreen supported)")
     parser.add_argument("--tab", type=int, default=0)
-    parser.add_argument("--service-check", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args.screenshot or args.service_check:
+    if args.screenshot:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide2.QtCore import Qt, QTimer
     from PySide2.QtWidgets import QApplication
@@ -27,13 +26,9 @@ def main():
             )
     from app.main_window import MainWindow
 
-    settings_path = Path(args.service_check).with_suffix(".settings.json") if args.service_check else None
-    window = MainWindow(settings_path=settings_path, auto_connect=False)
+    window = MainWindow(auto_connect=False)
     window.show()
     window.tabs.setCurrentIndex(args.tab)
-    if args.service_check:
-        from _service_smoke import check
-        QTimer.singleShot(0, lambda: check(app, window, args.service_check))
     if args.screenshot:
 
         def capture():

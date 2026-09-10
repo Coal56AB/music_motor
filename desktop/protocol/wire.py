@@ -29,6 +29,11 @@ class Command(IntEnum):
     EVENTS = 18
     CLEAR = 19
     QUEUE = 20
+    SONG_BEGIN = 48
+    SONG_DATA = 49
+    SONG_COMMIT = 50
+    SONG_STATUS = 51
+    SCREEN_SONG = 52
     ACK = 128
     NAK = 129
 

@@ -10,3 +10,6 @@ firmware/MDK-ARM/RTE/
 desktop/user_settings.json
 desktop/audio_cache/
 MusicMotorStudio.exe
+
+# Local verification artifacts are not part of the project.
+/tests/

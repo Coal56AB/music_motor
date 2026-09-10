@@ -253,7 +253,7 @@ class MotorCard(QFrame):
             root.addWidget(self.step_button)
 
     def update_status(self, status=None, connected=False, link_error=False, playing=False, music_playing=False, gap_note=None):
-        low, high = self.config.get('min_frequency', 20), self.config.get('max_frequency', 4000)
+        low, high = self.config.get('min_frequency', 20), self.config.get('max_frequency', 1200)
         if getattr(self, '_frequency_limits', None) != (low, high):
             self._frequency_limits = (low, high)
             self.hz.setRange(low, high)

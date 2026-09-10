@@ -1,4 +1,4 @@
 [submodule "display"]
-	path = display
+	path = esp32-diplsay-midi
 	url = https://github.com/Coal56AB/HMI_Display.git
 	branch = codex/music-box-touch

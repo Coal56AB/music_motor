@@ -1,6 +1,7 @@
 #include "config.h"
 #include "platform.h"
 #include "main.h"
+#include "half_duplex_wire.h"
 typedef struct {
     GPIO_TypeDef *port;
     uint16_t pin;
@@ -11,6 +12,14 @@ static volatile uint16_t pending_half[MOTOR_COUNT], half[MOTOR_COUNT];
 static volatile uint8_t active[MOTOR_COUNT], high[MOTOR_COUNT], oc_error;
 static volatile uint8_t rx[UART_RING_SIZE], tx[UART_RING_SIZE], uart_error;
 static volatile uint16_t rh, rt, th, tt;
+static volatile uint8_t esp_rx[UART_RING_SIZE], esp_tx[UART_RING_SIZE], esp_uart_error;
+static volatile uint16_t esp_rh, esp_rt, esp_th, esp_tt;
+static uint8_t esp_reply_frame[HD_MAX_FRAME];
+static volatile uint16_t esp_reply_size, esp_reply_offset;
+static volatile uint32_t esp_rx_times[UART_RING_SIZE];
+static uint32_t esp_read_at;
+static uint32_t esp_reply_at;
+static uint8_t esp_reply_pending;
 uint32_t platform_lock(void) {
     uint32_t key;
     __asm volatile("mrs %0, primask\ncpsid i" : "=r"(key)::"memory");
@@ -186,6 +195,93 @@ uint8_t platform_uart_error(void) {
     platform_unlock(key);
     return e;
 }
+void platform_esp_uart_irq(void) {
+    uint32_t sr = USART2->SR;
+    if (sr & 0x2fu) {
+        uint8_t b = (uint8_t)USART2->DR;
+        if (sr & 15u)
+            esp_uart_error = 1;
+        else if (sr & (1u << 5)) {
+            uint16_t next = (esp_rh + 1) & (UART_RING_SIZE - 1u);
+            if (next == esp_rt)
+                esp_uart_error = 1;
+            else {
+                esp_rx[esp_rh] = b;
+                esp_rx_times[esp_rh] = platform_ms();
+                esp_rh = next;
+            }
+        }
+    }
+    if ((sr & USART_SR_TXE) && (USART2->CR1 & USART_CR1_TXEIE)) {
+        if (esp_reply_offset < esp_reply_size) USART2->DR = esp_reply_frame[esp_reply_offset++];
+        else {
+            USART2->CR1 &= ~USART_CR1_TXEIE;
+            USART2->CR1 |= USART_CR1_TCIE;
+        }
+    }
+    if ((USART2->SR & USART_SR_TC) && (USART2->CR1 & USART_CR1_TCIE) && !(USART2->CR1 & USART_CR1_TXEIE)) {
+        /* TC, not TXE: release the wire only after the final stop bit. */
+        USART2->CR1 &= ~(USART_CR1_TCIE | USART_CR1_TE);
+        (void)USART2->SR;(void)USART2->DR;
+        USART2->CR1 |= USART_CR1_RE | USART_CR1_RXNEIE;
+    }
+}
+
+int platform_esp_read(void) {
+    if (esp_rt == esp_rh)
+        return -1;
+    int b = esp_rx[esp_rt];
+    esp_read_at=esp_rx_times[esp_rt];
+    esp_rt = (esp_rt + 1) & (UART_RING_SIZE - 1u);
+    return b;
+}
+void platform_esp_write(const uint8_t *data, uint16_t n) {
+    uint32_t key = platform_lock();
+    if (n > ((esp_tt - esp_th - 1u) & (UART_RING_SIZE - 1u))) {
+        esp_uart_error = 1;
+        platform_unlock(key);
+        return;
+    }
+    for (uint16_t i = 0; i < n; i++) {
+        esp_tx[esp_th] = data[i];
+        esp_th = (esp_th + 1) & (UART_RING_SIZE - 1u);
+    }
+    /* Queued only. The master must explicitly grant a response. */
+    platform_unlock(key);
+}
+void platform_esp_reply(uint8_t sequence) {
+    uint8_t payload[HD_MAX_PAYLOAD];unsigned n=0;
+    /* No unsolicited transmission; a stale grant must never start late. */
+    if(platform_ms()-esp_read_at>HD_REPLY_DEADLINE_MS || (USART2->CR1 & USART_CR1_TE)) {
+        esp_tt=esp_th;return;
+    }
+    while(esp_tt!=esp_th && n<sizeof(payload)) {
+        payload[n++]=esp_tx[esp_tt];esp_tt=(esp_tt+1)&(UART_RING_SIZE-1u);
+    }
+    esp_reply_size=(uint16_t)hd_encode(esp_reply_frame,HD_REPLY,sequence,payload,n);
+    esp_reply_offset=0;esp_reply_at=esp_read_at;esp_reply_pending=1;
+}
+void platform_esp_poll(void) {
+    if(!esp_reply_pending)return;
+    uint32_t age=platform_ms()-esp_reply_at;
+    if(age<1)return; /* One millisecond turnaround for the master. */
+    esp_reply_pending=0;
+    if(age>HD_REPLY_DEADLINE_MS)return;
+    uint32_t key=platform_lock();
+    USART2->CR1 &= ~(USART_CR1_RE | USART_CR1_RXNEIE);
+    USART2->SR &= ~USART_SR_TC;
+    USART2->CR1 |= USART_CR1_TE | USART_CR1_TXEIE;
+    platform_unlock(key);
+}
+uint8_t platform_esp_uart_error(void) {
+    uint32_t key = platform_lock();
+    uint8_t e = esp_uart_error;
+    esp_uart_error = 0;
+    if (e)
+        esp_rt = esp_rh;
+    platform_unlock(key);
+    return e;
+}
 uint8_t platform_oc_error(void) {
     uint32_t key = platform_lock();
     uint8_t e = oc_error;
@@ -236,6 +332,24 @@ void platform_init(void) {
     TIM2->CR1 |= TIM_CR1_CEN;
     TIM3->CR1 |= TIM_CR1_CEN;
     TIM4->CR1 |= TIM_CR1_CEN;
+#if LIVE_MIDI_MODE
+    /* Dedicated single-wire ESP UART: PA2 TX/RX, external pull-up to 3.3 V. Kept outside generated CubeMX code. */
+    __HAL_RCC_USART2_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_AFIO_REMAP_USART2_DISABLE();
+    GPIO_InitTypeDef esp_gpio = {0};
+    esp_gpio.Pin = GPIO_PIN_2;
+    esp_gpio.Mode = GPIO_MODE_AF_OD;
+    esp_gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOA, &esp_gpio);
+    USART2->CR1 = 0;
+    USART2->CR2 = 0;
+    USART2->CR3 = USART_CR3_EIE | USART_CR3_HDSEL;
+    USART2->BRR = (HAL_RCC_GetPCLK1Freq() + ESP_UART_BAUD / 2u) / ESP_UART_BAUD;
+    USART2->CR1 = USART_CR1_UE | USART_CR1_RE | USART_CR1_RXNEIE;
+    HAL_NVIC_SetPriority(USART2_IRQn, 8, 0);
+    HAL_NVIC_EnableIRQ(USART2_IRQn);
+#endif
     USART1->CR1 |= USART_CR1_RXNEIE;
     USART1->CR3 |= USART_CR3_EIE;
 }

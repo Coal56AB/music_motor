@@ -37,6 +37,7 @@ class StreamPlayer(QObject):
         self.disable_after_stop = True
         self.lookahead = 1500
         self.epoch = 0
+        self.before_start = None
         client.status.connect(self.on_status)
         client.fault.connect(self.on_fault)
 
@@ -133,10 +134,14 @@ class StreamPlayer(QObject):
         def start():
             if epoch != self.epoch or self.state != "preparing":
                 return
-            self.client.send(
-                C.STREAM_START,
-                callback=lambda _: self.set_state("playing") if epoch == self.epoch else None,
-            )
+            def begin_stream():
+                if epoch == self.epoch and self.state == 'preparing':
+                    self.client.send(C.STREAM_START,
+                        callback=lambda _: self.set_state("playing") if epoch == self.epoch else None)
+            if self.before_start:
+                self.before_start(begin_stream)
+            else:
+                begin_stream()
 
         QTimer.singleShot(5, start)
 

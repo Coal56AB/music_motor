@@ -71,7 +71,7 @@
 <rect x="384" y="772" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
 <circle cx="395" cy="794" r="5" fill="#8999aa"/>
 <text x="407" y="800" class="pin" style="fill:#8999aa">PA9</text>
-<text x="470" y="800" class="small" style="fill:#8999aa">UART TX</text>
+<text x="470" y="800" class="small" style="fill:#8999aa">PC TX</text>
 <rect x="384" y="827" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
 <circle cx="395" cy="849" r="5" fill="#8999aa"/>
 <text x="407" y="855" class="pin" style="fill:#8999aa">GND</text>
@@ -108,7 +108,7 @@
 <rect x="597" y="717" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
 <circle cx="608" cy="739" r="5" fill="#8999aa"/>
 <text x="620" y="745" class="pin" style="fill:#8999aa">PA10</text>
-<text x="683" y="745" class="small" style="fill:#8999aa">UART RX</text>
+<text x="683" y="745" class="small" style="fill:#8999aa">PC RX</text>
 <rect x="597" y="772" width="192" height="45" rx="10" fill="#fff" stroke="#546a8a" stroke-width="2"/>
 <circle cx="608" cy="794" r="5" fill="#546a8a"/>
 <text x="620" y="800" class="pin" style="fill:#546a8a">PA8</text>
@@ -125,7 +125,7 @@
 <rect x="824" y="387" width="192" height="45" rx="10" fill="#fff" stroke="#8999aa" stroke-width="2"/>
 <circle cx="835" cy="409" r="5" fill="#8999aa"/>
 <text x="847" y="415" class="pin" style="fill:#8999aa">PA2</text>
-<text x="910" y="415" class="small" style="fill:#8999aa"></text>
+<text x="910" y="415" class="small" style="fill:#8999aa">ESP 1WIRE</text>
 <rect x="824" y="442" width="192" height="45" rx="10" fill="#fff" stroke="#bd861d" stroke-width="2"/>
 <circle cx="835" cy="464" r="5" fill="#bd861d"/>
 <text x="847" y="470" class="pin" style="fill:#bd861d">PA4</text>

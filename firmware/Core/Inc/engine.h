@@ -35,7 +35,8 @@ enum {
     C_STREAM_STOP,
     C_EVENTS,
     C_CLEAR,
-    C_QUEUE
+    C_QUEUE,
+    C_BOOT_TEST
 };
 typedef struct {
     uint32_t frequency;
@@ -54,6 +55,7 @@ typedef struct {
 extern State state;
 void engine_init(void);
 void engine_tick(void);
+uint8_t engine_display_hold(uint8_t motor);
 void engine_estop(void);
 void engine_fault(uint8_t error);
 void engine_note_set(const uint8_t *notes, uint8_t count);
