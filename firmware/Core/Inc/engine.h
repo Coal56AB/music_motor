@@ -56,6 +56,7 @@ void engine_init(void);
 void engine_tick(void);
 void engine_estop(void);
 void engine_fault(uint8_t error);
+void engine_note_set(const uint8_t *notes, uint8_t count);
 uint8_t engine_command(uint8_t cmd, const uint8_t *p, uint8_t len, uint8_t *out, uint8_t *outlen);
 uint16_t frequency_period(uint32_t mhz);
 uint32_t period_frequency(uint16_t period);

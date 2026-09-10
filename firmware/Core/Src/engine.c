@@ -1,11 +1,17 @@
 #include "engine.h"
 #include "platform.h"
 #include <string.h>
+#include "../../../shared/note_set_wire.h"
 State state;
 static Event queue[NOTES_BUFFER_DEPTH];
 static uint16_t head, tail;
 static uint32_t origin, last_at, ready_at, reset_release, last_command;
 static uint8_t end_queued, pulse_pending;
+#if LIVE_MIDI_MODE
+static uint8_t midi_notes[6], midi_count, midi_pending, midi_link;
+static uint8_t midi_assignment[6]; /* Original pitches, before octave folding. */
+static uint32_t midi_last;
+#endif
 static const uint32_t octave_mhz[12] = {261626, 277183, 293665, 311127, 329628, 349228,
                                         369994, 391995, 415305, 440000, 466164, 493883};
 static uint32_t u32(const uint8_t *p) {
@@ -64,6 +70,10 @@ static void stream_stop(uint8_t disable) {
     }
 }
 void engine_estop(void) {
+#if LIVE_MIDI_MODE
+    midi_link = midi_pending = midi_count = 0;
+    memset(midi_assignment, 255, sizeof(midi_assignment));
+#endif
     stream_stop(1);
     state.sleep = state.reset = 1;
     pulse_pending = 0;
@@ -79,6 +89,9 @@ void engine_init(void) {
     end_queued = pulse_pending = 0;
     memset(&state, 0, sizeof(state));
     state.mask = DEFAULT_INSTALLED_MASK;
+#if LIVE_MIDI_MODE
+    state.mask = MIDI_INSTALLED_MASK;
+#endif
     for (uint8_t i = 0; i < MOTOR_COUNT; i++) {
         state.motors[i].frequency = note_mhz(DEFAULT_NOTE);
         state.motors[i].note = DEFAULT_NOTE;
@@ -310,8 +323,73 @@ uint8_t engine_command(uint8_t cmd, const uint8_t *p, uint8_t len, uint8_t *out,
     }
     return E_OK;
 }
+void engine_note_set(const uint8_t *notes, uint8_t count) {
+#if LIVE_MIDI_MODE
+    if (count > 6) return;
+    for (uint8_t i=0; i<count; ++i) {
+        if (notes[i] > 127) return;
+        for (uint8_t j=0; j<i; ++j) if (notes[j]==notes[i]) return;
+    }
+    uint32_t now = platform_ms();
+    midi_last = last_command = now;
+    midi_link = 1;
+    memcpy(midi_notes, notes, count);
+    midi_count = count;
+    midi_pending = 1;
+    /* Wake only after startup/fault, never delay an ordinary Note On. */
+    if (state.sleep || state.reset) {
+        state.sleep = state.reset = 0;
+        pulse_pending = 0;
+        platform_common(state.raw, 0, 0);
+        ready_at = now + STARTUP_DELAY_MS;
+    }
+    engine_tick();
+#else
+    (void)notes; (void)count;
+#endif
+}
+#if LIVE_MIDI_MODE
+static void midi_apply(void) {
+    uint8_t matched[6] = {0};
+    uint8_t marked = 0;
+    midi_pending = 0;
+    for (uint8_t m=0; m<6; ++m) {
+        uint8_t keep=0;
+        for (uint8_t i=0; i<midi_count; ++i)
+            if (midi_assignment[m]==midi_notes[i] && state.motors[m].active) {
+                matched[i]=keep=1; break;
+            }
+        if (!keep && midi_assignment[m]!=255) {
+            if (!marked) {platform_midi_mark();marked=1;}
+            stop(m); state.motors[m].enabled=0; platform_enable(m,0);
+            midi_assignment[m]=255;
+        }
+    }
+    for (uint8_t i=0; i<midi_count; ++i) if (!matched[i]) {
+        for (uint8_t m=0; m<6; ++m) if ((state.mask & (1u<<m)) && midi_assignment[m]==255) {
+            uint32_t f=note_mhz(midi_notes[i]);
+            while (f<MIN_FREQ_MHZ) f*=2;
+            while (f>MAX_FREQ_MHZ) f/=2;
+            if (!frequency_period(f)) { engine_fault(E_VALUE); return; }
+            if (!marked) {platform_midi_mark();marked=1;}
+            state.motors[m].frequency=f;
+            state.motors[m].note=midi_notes[i];
+            state.motors[m].enabled=1;platform_enable(m,1);
+            uint8_t err=start(m);
+            if (err) {engine_fault(err);return;}
+            midi_assignment[m]=midi_notes[i];
+            break;
+        }
+    }
+}
+#endif
 void engine_tick(void) {
     uint32_t now = platform_ms();
+#if LIVE_MIDI_MODE
+    if (midi_link && now-midi_last>NS_TIMEOUT_MS) {engine_fault(E_TIMEOUT);return;}
+    if (midi_pending && (int32_t)(now-ready_at)>=0) midi_apply();
+    return;
+#endif
     if (pulse_pending && (int32_t)(now - reset_release) >= 0) {
         pulse_pending = 0;
         state.reset = 0;

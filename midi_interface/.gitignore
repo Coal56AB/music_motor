@@ -1,0 +1,7 @@
+.pio/
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.midi_interface
+managed_components/
+dependencies.lock

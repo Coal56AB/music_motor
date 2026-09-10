@@ -2,6 +2,26 @@
 #include "engine.h"
 #include "platform.h"
 #include <string.h>
+#if LIVE_MIDI_MODE
+#include "../../../shared/note_set_wire.h"
+static uint8_t midi_frame[NS_SIZE];
+static uint8_t midi_used;
+static uint32_t midi_byte_at;
+static void midi_byte(uint8_t b) {
+    uint32_t now=platform_ms();
+    if (midi_used && now-midi_byte_at>5u) midi_used=0;
+    midi_byte_at=now;
+    midi_frame[midi_used++]=b;
+    /* Sliding fixed-size window recovers on the very next valid frame. */
+    if (midi_used==NS_SIZE) {
+        if (ns_valid(midi_frame)) {
+            engine_note_set(midi_frame+5,midi_frame[4]);midi_used=0;
+        } else {
+            memmove(midi_frame,midi_frame+1,NS_SIZE-1);--midi_used;
+        }
+    }
+}
+#endif
 static uint8_t rx[247], previous[247], response[247];
 static uint16_t used, previous_len, response_len;
 static uint32_t last_byte, previous_at;
@@ -16,6 +36,9 @@ uint16_t protocol_crc(const uint8_t *data, uint16_t n) {
 }
 void protocol_init(void) {
     used = previous_len = response_len = 0;
+#if LIVE_MIDI_MODE
+    midi_used=0;
+#endif
 }
 static void drop(void) {
     if (used) {
@@ -80,6 +103,10 @@ static void parse(void) {
     }
 }
 void protocol_byte(uint8_t byte) {
+#if LIVE_MIDI_MODE
+    midi_byte(byte);
+    return;
+#endif
     if (used && platform_ms() - last_byte > FRAME_TIMEOUT_MS) {
         used = 0;
         state.error = E_TIMEOUT;
@@ -94,6 +121,9 @@ void protocol_byte(uint8_t byte) {
 void protocol_poll(void) {
     if (platform_uart_error()) {
         used = 0;
+#if LIVE_MIDI_MODE
+        midi_used=0;
+#endif
         engine_fault(E_UART);
     }
     if (platform_oc_error())

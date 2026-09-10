@@ -127,6 +127,11 @@ void platform_tim4_irq(void) {
 uint32_t platform_ms(void) {
     return HAL_GetTick();
 }
+void platform_midi_mark(void) {
+#if MIDI_DEBUG_GPIO
+    GPIOC->ODR ^= GPIO_PIN_13;
+#endif
+}
 void platform_uart_irq(void) {
     uint32_t sr = USART1->SR;
     if (sr & 0x2fu) {
@@ -207,6 +212,11 @@ void platform_safe_gpio(void) {
     output_pin(reset_pin);
 }
 void platform_init(void) {
+#if MIDI_DEBUG_GPIO
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    write_pin((Pin){GPIOC, GPIO_PIN_13}, 0);
+    output_pin((Pin){GPIOC, GPIO_PIN_13});
+#endif
     uint32_t timer_clock = HAL_RCC_GetPCLK1Freq();
     if ((RCC->CFGR & RCC_CFGR_PPRE1) != 0u) timer_clock *= 2u;
     if (timer_clock / (TIM2->PSC + 1u) != TIMER_HZ ||

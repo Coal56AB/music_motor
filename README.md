@@ -88,6 +88,7 @@ UART: **PA9 (TX) → RX CH340, PA10 (RX) ← TX CH340**, общая земля �
 
 - [firmware](firmware/) — прошивка STM32, проекты CubeMX и Keil, [схема подключения](firmware/wiring-layout.svg).
 - [desktop](desktop/) — исходники программы на Python и PySide2.
+- [midi_interface](midi_interface/README.md) — USB-MIDI Host на ESP32-S3, выбор шести голосов и интеграция со STM32; сборка, подключение и результаты проверок.
 - [Примеры](desktop/examples/) — MIDI, проект и тестовая аудиозапись.
 
 ## Технологии

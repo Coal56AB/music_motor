@@ -2,6 +2,7 @@
 #define PLATFORM_H
 #include <stdint.h>
 uint32_t platform_ms(void);
+void platform_midi_mark(void);
 void platform_init(void);
 void platform_safe_gpio(void);
 void platform_fault(void);
