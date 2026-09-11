@@ -10,7 +10,7 @@ static HdParser esp_wire;
 static uint32_t esp_wire_at;
 static uint8_t pc_active,auto_play,save_wait;
 static uint32_t pc_last,pc_title_sent;
-static uint8_t pc_song[57],pc_song_len,pc_action[7],pc_action_id;
+static uint8_t pc_song[59],pc_song_len,pc_action[7],pc_action_id;
 static uint8_t midi_frame[NS_SIZE];
 static uint8_t midi_used;
 static uint32_t midi_byte_at;
@@ -142,6 +142,13 @@ static void hmi_byte(uint8_t b) {
         if(p[0]==255) {
             hmi_authority=p[1]==0&&p[2]==1&&p[3]==0&&p[4]==0&&p[5]==0;
             if(!hmi_authority&&hmi_manual) {engine_estop();hmi_manual=0;}
+            else if(hmi_authority&&hmi_manual&&!pc_active&&!auto_play&&!save_wait&&
+                    (!midi_seen||now-midi_received_at>NS_TIMEOUT_MS)) {
+                /* A valid heartbeat renews the manual owner's engine watchdog,
+                   just as a PC ping does. It cannot renew another owner's lease. */
+                uint8_t out[2],len=0;
+                engine_command(C_PING,p,0,out,&len);
+            }
         } else {
             for(unsigned i=0;i<16;i++)if(hmi_recent[i].valid&&hmi_recent[i].seq==hmi_frame[3]&&
                 now-hmi_recent[i].at<2000&&!memcmp(hmi_recent[i].payload,p,6)) {
@@ -180,7 +187,13 @@ static void hmi_poll(uint8_t emit) {
         memcpy(p+6,pc_song+1,8);
         if(pc_song[0]&1)p[1]|=2;
         if(pc_song[0]&2)p[1]|=4;
-        if(now-pc_title_sent>=500){hmi_send(0x41,0,pc_song+9,pc_song_len-9);pc_title_sent=now;}
+        if(now-pc_title_sent>=500){
+            uint8_t extended=(pc_song[0]&128)&&pc_song_len>=11;
+            uint8_t invalid[2]={255,255};
+            hmi_send(0x44,0,extended?pc_song+9:invalid,2);
+            hmi_send(0x41,0,pc_song+(extended?11:9),pc_song_len-(extended?11:9));
+            pc_title_sent=now;
+        }
     }
     if(pc_active)p[1]|=16; /* Valid PC protocol traffic, not mere USB cable presence. */
     if(state.running && (auto_play || (pc_active&&pc_song_len>=9)))p[1]|=32; /* Fully known file: enable LCD presentation timing. */
@@ -252,9 +265,10 @@ static void parse(void) {
             uint8_t err;
 #if LIVE_MIDI_MODE
             if(rx[4]==52) { /* PC song position/title and reliable LCD action mailbox. */
-                err=(len<10||len>58)?E_LENGTH:E_OK;
+                err=(len<10||len>((rx[6]&128)?60:58)||((rx[6]&128)&&len<12))?E_LENGTH:E_OK;
                 if(!err) {
                     if(rx[5]==pc_action[0])memset(pc_action,0,sizeof(pc_action));
+                    if(pc_song_len!=len-1 || memcmp(pc_song+9,rx+15,len-10))pc_title_sent=platform_ms()-500;
                     pc_song_len=len-1;memcpy(pc_song,rx+6,pc_song_len);
                     outlen=7;memcpy(response+7,pc_action,7);
                 }

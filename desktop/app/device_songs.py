@@ -19,6 +19,8 @@ class DeviceSongs(QObject):
             self.active=False; self.epoch+=1; self.failed.emit(text)
     def start(self, allocation, title, slot, config):
         if self.active:return
+        if not 0 <= slot < 10:
+            self.failed.emit('Выберите место от 1 до 10');return
         if not self.client.connected or self.client.sim:
             self.failed.emit('Подключите STM32 к компьютеру');return
         self.data=b''.join(event_bytes(*event) for event in allocation.events)

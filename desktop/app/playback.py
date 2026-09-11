@@ -72,10 +72,13 @@ class StreamPlayer(QObject):
             for t, m, op, v in self.allocation.events
             if t >= self.offset
         ]
+        restored = []
         for start, end, motor, uid, pitch in self.allocation.segments:
             if start < self.offset < end:
-                self.events.append((0, motor, 1, round(note_frequency(pitch) * 1000)))
-        self.events.sort(key=lambda e: (e[0], e[2], e[1]))
+                restored.append((0, motor, 1, round(note_frequency(pitch) * 1000)))
+        # Reconstructed voices precede original events at the seek boundary.
+        self.events = restored + self.events
+        self.events.sort(key=lambda e: e[0])
         self.index = 0
         self.free = 256
         self.inflight = False

@@ -13,3 +13,4 @@ MusicMotorStudio.exe
 
 # Local verification artifacts are not part of the project.
 /tests/
+/build/midi-tests/

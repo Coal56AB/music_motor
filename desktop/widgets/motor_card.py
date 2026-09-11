@@ -252,7 +252,7 @@ class MotorCard(QFrame):
             grid.addWidget(enable, 1, 1, 1, 2)
             root.addWidget(self.step_button)
 
-    def update_status(self, status=None, connected=False, link_error=False, playing=False, music_playing=False, gap_note=None):
+    def update_status(self, status=None, connected=False, link_error=False, playing=False, music_playing=False, gap_note=None, note_range=None):
         low, high = self.config.get('min_frequency', 20), self.config.get('max_frequency', 1200)
         if getattr(self, '_frequency_limits', None) != (low, high):
             self._frequency_limits = (low, high)
@@ -265,6 +265,9 @@ class MotorCard(QFrame):
                     self.note.addItem(note_name(n), n)
             selected = self.note.findData(pitch)
             self.note.setCurrentIndex(selected if selected >= 0 else 0)
+        self.speed_bar.setToolTip(
+            'Диапазон мелодии: %s–%s, шкала 10–100%%' % tuple(note_name(n) for n in note_range)
+            if note_range is not None else 'Частота: %g–%g Гц, логарифмическая шкала' % (low, high))
         installed = bool(self.config["installed_mask"] & (1 << self.index))
         m = (
             status["motors"][self.index]
@@ -324,6 +327,10 @@ class MotorCard(QFrame):
         # Writing a frequency first and then zero caused one-frame idle flashes.
         level = round(max(0, min(1000, 1000 * math.log(max(low, visual['frequency']) / low)
                               / math.log(high / low)))) if sounding or held else 0
+        if note_range is not None and (sounding or held):
+            bottom, top = note_range
+            fraction = (visual['note'] - bottom) / (top - bottom) if top > bottom else 1
+            level = round(100 + 900 * max(0, min(1, fraction)))
         self.speed_bar.setValue(level)
         self.enable.setChecked(m["enabled"])
         self.direction.setCurrentIndex(int(m["direction"]))

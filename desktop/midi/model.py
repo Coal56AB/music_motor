@@ -16,6 +16,7 @@ class Part:
     motor: int = -1
     transpose: int = 0
     percussion: bool = False
+    source: int = 0
 
 
 @dataclass
@@ -26,6 +27,19 @@ class Note:
     duration: float
     pitch: int
     velocity: int = 90
+    motor: int = -1  # Individual pin; -1 leaves the choice to the allocator.
+    on_order: int = -1
+    off_order: int = -1
+
+
+@dataclass
+class Control:
+    at: float
+    channel: int
+    control: int
+    value: int
+    order: int = -1
+    source: int = 0
 
 
 @dataclass
@@ -35,6 +49,8 @@ class Song:
     tempos: list = field(default_factory=lambda: [(0.0, 500000)])
     ticks_per_beat: int = 480
     title: str = "Новая композиция"
+    controls: list = field(default_factory=list)
+    length: float = 0.0  # Includes end-of-track silence and pedal tails.
 
     def seconds(self, beat, speed=1.0):
         total = 0.0
@@ -58,7 +74,8 @@ class Song:
 
     @property
     def end(self):
-        return max((n.start + n.duration for n in self.notes), default=0)
+        return max(self.length, max((c.at for c in self.controls), default=0),
+                   max((n.start + n.duration for n in self.notes), default=0))
 
     def clone(self):
         return copy.deepcopy(self)
@@ -73,64 +90,59 @@ def load_midi(path):
     song = Song(
         ticks_per_beat=mid.ticks_per_beat, title=str(path).replace("\\", "/").split("/")[-1]
     )
-    tempos, uid = {0: 500000}, 0
+    tempos, events, names = {0: 500000}, [], {}
     for ti, track in enumerate(mid.tracks):
-        tick, programs, active = 0, [0] * 16, {}
+        tick, source = 0, 0
         name = next((m.name for m in track if m.type == "track_name"), "Track %d" % (ti + 1))
         try:
             name = name.encode("latin1").decode("utf8")
         except (UnicodeEncodeError, UnicodeDecodeError):
             pass
-        for msg in track:
+        names[ti] = name
+        for index, msg in enumerate(track):
             tick += msg.time
-            beat = tick / mid.ticks_per_beat
-            if msg.type == "set_tempo":
-                tempos[beat] = msg.tempo
-            elif msg.type == "program_change":
-                programs[msg.channel] = msg.program
-            elif msg.type == "note_on" and msg.velocity:
-                ch, pitch = msg.channel, msg.note
-                program = programs[ch]
-                pid = "%d:%d:%d" % (ti, ch, program)
-                if pid not in song.parts:
-                    song.parts[pid] = Part(
-                        pid,
-                        "%s · ch %d · GM %d" % (name, ch + 1, program + 1),
-                        ti,
-                        ch,
-                        program,
-                        ch != 9,
-                        percussion=ch == 9,
-                    )
-                active.setdefault((ch, pitch), []).append((beat, msg.velocity, pid))
-            elif msg.type in ("note_off", "note_on"):
-                stack = active.get((msg.channel, msg.note), [])
-                if stack:
-                    start, velocity, pid = stack.pop(0)
-                    song.notes.append(
-                        Note(
-                            uid,
-                            pid,
-                            start,
-                            max(1 / mid.ticks_per_beat, beat - start),
-                            msg.note,
-                            velocity,
-                        )
-                    )
-                    uid += 1
-        for (ch, pitch), stack in active.items():
-            for start, velocity, pid in stack:
-                song.notes.append(
-                    Note(
-                        uid,
-                        pid,
-                        start,
-                        max(0.25, tick / mid.ticks_per_beat - start),
-                        pitch,
-                        velocity,
-                    )
-                )
-                uid += 1
+            if msg.type == 'midi_port':
+                source = msg.port
+            events.append((tick, ti, index, source, msg))
+        song.length = max(song.length, tick / mid.ticks_per_beat)
+    active, programs = {}, {}
+
+    def finish(note, beat, order):
+        note.duration = max(0.0, beat - note.start)
+        note.off_order = order
+
+    # A track is editorial metadata, not an independent MIDI channel.
+    for order, (tick, ti, index, source, msg) in enumerate(sorted(events, key=lambda e: e[:3])):
+        beat = tick / mid.ticks_per_beat
+        if msg.type == 'set_tempo':
+            tempos[beat] = msg.tempo
+        elif msg.type == 'program_change':
+            programs[source, msg.channel] = msg.program
+        elif msg.type == 'control_change':
+            song.controls.append(Control(beat, msg.channel, msg.control, msg.value, order, source))
+            if msg.control in (120, 123, 124, 125, 126, 127):
+                for key, stack in active.items():
+                    if key[:2] == (source, msg.channel):
+                        for note in stack:
+                            finish(note, beat, order)
+                        stack.clear()
+        elif msg.type == 'note_on' and msg.velocity:
+            ch, pitch = msg.channel, msg.note
+            program = programs.get((source, ch), 0)
+            pid = '%d:%d:%d:%d' % (ti, source, ch, program)
+            if pid not in song.parts:
+                song.parts[pid] = Part(pid, '%s · ch %d · GM %d' % (names[ti], ch + 1, program + 1),
+                                      ti, ch, program, ch != 9, percussion=ch == 9, source=source)
+            note = Note(len(song.notes), pid, beat, 0, pitch, msg.velocity, on_order=order)
+            song.notes.append(note)
+            active.setdefault((source, ch, pitch), []).append(note)
+        elif msg.type in ('note_on', 'note_off'):
+            stack = active.get((source, msg.channel, msg.note), [])
+            if stack:
+                finish(stack.pop(0), beat, order)
+    for stack in active.values():
+        for note in stack:
+            finish(note, song.length, len(events))
     song.tempos = sorted(tempos.items())
     song.notes.sort(key=lambda n: (n.start, n.id))
     return song
@@ -145,41 +157,86 @@ def save_midi(song, path):
         tick = round(beat * song.ticks_per_beat)
         tempo_track.append(mido.MetaMessage("set_tempo", tempo=tempo, time=tick - previous))
         previous = tick
-    for part in song.parts.values():
+    # One ordered stream per MIDI port preserves same-tick CC/On/Off ordering
+    # across parts. All source notes are exported, including unallocated ones.
+    sources = sorted({p.source for p in song.parts.values()} | {c.source for c in song.controls})
+    for source in sources:
         track = mido.MidiTrack()
         mid.tracks.append(track)
-        track.append(mido.MetaMessage("track_name", name=part.name))
-        events = []
-        for n in song.notes:
-            if n.part == part.id:
-                start = round(n.start * song.ticks_per_beat)
-                end = max(start + 1, round((n.start + n.duration) * song.ticks_per_beat))
-                events.extend([(start, 1, n), (end, 0, n)])
+        track.append(mido.MetaMessage('track_name', name=song.title))
+        track.append(mido.MetaMessage('midi_port', port=source))
         previous = 0
-        for tick, on, n in sorted(events, key=lambda e: (e[0], e[1], e[2].id)):
-            if on:
-                # Parts can share a channel after Program Change. Restore the program at
-                # each attack, instead of placing conflicting changes at time zero.
-                track.append(
-                    mido.Message(
-                        "program_change",
-                        channel=part.channel,
-                        program=part.program,
-                        time=tick - previous,
-                    )
-                )
+        for beat, order, kind, obj in midi_timeline(song):
+            part = song.parts[obj.part] if kind != 'cc' else None
+            if (part.source if part else obj.source) != source:
+                continue
+            tick = round(beat * song.ticks_per_beat)
+            if kind == 'on':
+                track.append(mido.Message('program_change', channel=part.channel,
+                                          program=part.program, time=tick - previous))
                 previous = tick
-            track.append(
-                mido.Message(
-                    "note_on" if on else "note_off",
-                    channel=part.channel,
-                    note=n.pitch,
-                    velocity=n.velocity if on else 0,
-                    time=tick - previous,
-                )
-            )
+            if kind == 'cc':
+                msg = mido.Message('control_change', channel=obj.channel, control=obj.control, value=obj.value)
+            else:
+                msg = mido.Message('note_on' if kind == 'on' else 'note_off', channel=part.channel,
+                                   note=obj.pitch, velocity=obj.velocity if kind == 'on' else 0)
+            track.append(msg.copy(time=tick - previous))
             previous = tick
+        track.append(mido.MetaMessage('end_of_track', time=max(0, round(song.end * song.ticks_per_beat) - previous)))
     mid.save(str(path))
+
+
+def midi_timeline(song):
+    events = []
+    for n in song.notes:
+        events.append((n.start, n.on_order if n.on_order >= 0 else 1000000000 + n.id, 'on', n))
+        events.append((n.start + n.duration, n.off_order if n.off_order >= 0 else -1, 'off', n))
+    events.extend((c.at, c.order if c.order >= 0 else -2, 'cc', c) for c in song.controls)
+    return sorted(events, key=lambda e: (e[0], e[1], {'off': 0, 'cc': 1, 'on': 2}[e[2]]))
+
+
+def sounding_spans(song):
+    """Interpret note lifetimes before allocating motors; never edit source notes.
+
+    Returns id -> (start beat, sound end beat, physical release beat).
+    Repeated attacks remain separate; output allocation can merge equal pitches.
+    """
+    sounding, down, sustain, result = {}, set(), {}, {}
+    releases = {n.id: n.start + n.duration for n in song.notes}
+
+    def close(uid, at):
+        n = sounding.pop(uid)
+        result[uid] = (n.start, at, releases[uid])
+        down.discard(uid)
+
+    for at, order, kind, obj in midi_timeline(song):
+        if kind == 'on':
+            if obj.velocity > 0 and (obj.duration > 0 or 0 <= obj.on_order < obj.off_order):
+                sounding[obj.id] = obj
+                down.add(obj.id)
+        elif kind == 'off':
+            down.discard(obj.id)
+            p = song.parts[obj.part]
+            if obj.id in sounding and not sustain.get((p.source, p.channel), False):
+                close(obj.id, at)
+        else:
+            channel = (obj.source, obj.channel)
+            if obj.control == 64:
+                sustain[channel] = obj.value >= 64
+            elif obj.control == 121:
+                sustain[channel] = False
+            for uid, n in list(sounding.items()):
+                p = song.parts[n.part]
+                if (p.source, p.channel) != channel:
+                    continue
+                if obj.control in (123, 124, 125, 126, 127) and uid in down:
+                    down.remove(uid)
+                    releases[uid] = at
+                if obj.control == 120 or (uid not in down and not sustain.get(channel, False)):
+                    close(uid, at)
+    for uid in list(sounding):
+        close(uid, song.end)
+    return result
 
 
 def save_project(song, path):
@@ -193,6 +250,7 @@ def load_project(path):
     data["notes"] = [Note(**n) for n in data["notes"]]
     data["parts"] = {k: Part(**p) for k, p in data["parts"].items()}
     data["tempos"] = [tuple(t) for t in data["tempos"]]
+    data['controls'] = [Control(**c) for c in data.get('controls', [])]
     return Song(**data)
 
 

@@ -45,7 +45,7 @@ from widgets.piano_roll import PianoRoll, NoteItem
 from protocol.client import Client
 from protocol.wire import Command as C, Error
 from midi.model import load_midi, save_midi, demo_song, save_project, load_project, Part, Song, Note
-from midi.allocator import allocate, STRATEGIES, MOTOR_COLORS
+from midi.allocator import allocate, pin_conflict_spans, STRATEGIES, MOTOR_COLORS
 from audio.transcribe import transcribe
 from audio.preview import PreviewPlayer, preview_notes
 
@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
         self.latest_status = None
         self.link_error = False
         self.allocation = None
+        self.allocation_dirty = True
         self.loading = False
         self.audio_thread = None
         self.audio_song = None
@@ -331,6 +332,17 @@ class MainWindow(QMainWindow):
         self.parts.itemSelectionChanged.connect(self.part_selected)
         ll.addWidget(self.parts)
         ll.addWidget(button("Выделенные ноты → новая партия", self.split_part))
+        self.note_motor = QComboBox()
+        self.note_motor.addItem('Автоматическое назначение', -1)
+        for motor in range(6):
+            self.note_motor.addItem('Закрепить за M%d' % (motor + 1), motor)
+        ll.addWidget(self.note_motor)
+        ll.addWidget(button('Применить к выделенным нотам',
+                            lambda: self.roll.assign_selected(self.note_motor.currentData())))
+        ll.addWidget(button('Пересчитать распределение', self.reallocate))
+        self.editor_allocation_status = QLabel('')
+        self.editor_allocation_status.setWordWrap(True)
+        ll.addWidget(self.editor_allocation_status)
         self.skip_list = QPlainTextEdit()
         self.skip_list.setReadOnly(True)
         self.skip_list.setMaximumHeight(145)
@@ -485,7 +497,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.pause_button)
         row.addWidget(button("■ Стоп", lambda: self.player.stop()))
         self.device_slot=QComboBox()
-        self.device_slot.addItems(['Место %d'%i for i in range(1,5)])
+        self.device_slot.addItems(['Место %d'%i for i in range(1,11)])
         row.addWidget(self.device_slot)
         self.device_save_button=button("Сохранить в устройство",self.save_device_song)
         row.addWidget(self.device_save_button)
@@ -718,7 +730,8 @@ class MainWindow(QMainWindow):
             gap_note = short_gap_note(self.player.allocation.segments, card.index, self.player.position,
                                       self.config.get('note_hold_ms', 250)) if self.player.state == 'playing' and self.player.allocation else None
             card.update_status(self.latest_status, self.client.connected, self.link_error, playing,
-                               self.player.state == 'playing', gap_note)
+                               self.player.state == 'playing', gap_note,
+                               self.player.allocation.note_range if playing and self.player.allocation else None)
             if self.player.state == 'preparing':
                 card.direction.setEnabled(False)
         for i, label in enumerate(self.voice_labels):
@@ -921,6 +934,9 @@ class MainWindow(QMainWindow):
         if self.player.state != "stopped":
             self.player.stop()
         self.song = song
+        self.allocation = None
+        self.allocation_dirty = True
+        self.midi_overview.set_allocation(None, self.config['installed_mask'])
         self.roll.set_song(song)
         self.roll.set_playhead(0, -1)
         self.preview_progress(0)
@@ -991,7 +1007,7 @@ class MainWindow(QMainWindow):
         while pid in self.song.parts:
             pid += "x"
         source = self.song.parts[selected[0].part]
-        self.song.parts[pid] = Part(pid, name, source.track, source.channel, source.program)
+        self.song.parts[pid] = Part(pid, name, source.track, source.channel, source.program, source=source.source)
         before = copy.deepcopy(self.song.notes)
         for n in selected:
             n.part = pid
@@ -1009,18 +1025,35 @@ class MainWindow(QMainWindow):
             self.roll.commit(before, "Velocity")
 
     def on_edited(self):
-        self.preview.stop()
-        self.allocation = None
-        self.reallocate()
+        self.invalidate_allocation()
 
     def invalidate_allocation(self, *args):
         self.preview.stop()
-        if self.player.state == "stopped":
-            self.allocation = None
+        self.allocation_dirty = True
+        text = 'Есть изменения. Нажмите «Пересчитать распределение». Остальные назначения сохранены.'
+        self.update_pin_conflicts()
+        if self.roll.conflicts:
+            text = 'Красным отмечены пересечения закреплений (%d нот). ' % len(self.roll.conflicts) + text
+        self.allocation_label.setText(text)
+        self.editor_allocation_status.setText(text)
+
+    def update_pin_conflicts(self):
+        self.roll.set_conflicts(pin_conflict_spans(
+            self.song, self.config['installed_mask'], self.config['music_mask'], self.poly.value()))
+
+    def require_allocation(self):
+        if self.allocation is None or self.allocation_dirty:
+            self.show_error('Сначала нажмите «Пересчитать распределение». Ручные правки не запускают автомат.')
+            return False
+        return True
 
     def reallocate(self):
+        if self.player.state != 'stopped':
+            return False
+        self.preview.stop()
+        self.update_pin_conflicts()
         try:
-            self.allocation = allocate(
+            allocation = allocate(
                 self.song,
                 self.config["installed_mask"],
                 self.config["music_mask"],
@@ -1034,8 +1067,14 @@ class MainWindow(QMainWindow):
                 self.drums.isChecked(),
             )
         except (ValueError, OverflowError) as exc:
+            self.allocation_dirty = True
+            self.editor_allocation_status.setText(str(exc))
+            self.allocation_label.setText(str(exc))
             self.show_error(str(exc))
             return False
+        self.allocation = allocation
+        self.allocation_dirty = False
+        self.editor_allocation_status.setText('Распределение актуально. Серые участки не играют.')
         self.roll.set_allocation(self.allocation)
         self.midi_overview.set_allocation(self.allocation, self.config["installed_mask"])
         self.main_cursor_ms = min(self.main_cursor_ms, max(0, self.allocation.duration_ms - 1))
@@ -1073,7 +1112,7 @@ class MainWindow(QMainWindow):
         if self.preview.state == 'paused':
             self.preview.pause_resume()
             return
-        if self.listen_mode.currentIndex() == 1 and not self.reallocate():
+        if self.listen_mode.currentIndex() == 1 and not self.require_allocation():
             return
         self.preview_speed = self.tempo.value() / 100
         notes = preview_notes(self.song, self.preview_speed, self.transpose.value(),
@@ -1146,7 +1185,7 @@ class MainWindow(QMainWindow):
     def save_device_song(self):
         if self.player.state!='stopped':
             self.show_error('Остановите воспроизведение перед сохранением');return
-        if not self.reallocate():return
+        if not self.require_allocation():return
         if not self.allocation.assignments:
             self.show_error('Нет нот для доступных двигателей');return
         self.collect_settings()
@@ -1164,7 +1203,7 @@ class MainWindow(QMainWindow):
             return
         if self.player.state != "stopped":
             return
-        if not self.reallocate():
+        if not self.require_allocation():
             return
         if not self.allocation.assignments:
             self.show_error("Нет нот для доступных двигателей")
@@ -1185,7 +1224,9 @@ class MainWindow(QMainWindow):
         position = self.player.position if self.player.state != 'stopped' else self.main_cursor_ms
         flags = 1 if self.player.state == 'playing' else 2 if self.player.state == 'paused' else 0
         title = self.song.title.encode('utf-8')[:48].decode('utf-8', 'ignore').encode('utf-8')
-        payload = struct.pack('<BBII', self.screen_action_ack, flags, int(position), int(duration)) + title
+        bounds = self.allocation.note_range if self.allocation else None
+        payload = struct.pack('<BBIIBB', self.screen_action_ack, flags | 128, int(position), int(duration),
+                              *(bounds or (255, 255))) + title
         def accepted(data):
             self.device_screen_action(data)
             if on_ready: on_ready()
@@ -1204,7 +1245,7 @@ class MainWindow(QMainWindow):
     def seek_main_cursor(self, ms):
         self.cancel_direction_restart()
         self.preview.stop()
-        if self.player.state == 'stopped' and not self.reallocate():
+        if self.player.state == 'stopped' and not self.require_allocation():
             return
         self.main_cursor_ms = max(0, min(ms, max(0, self.allocation.duration_ms - 1)))
         self.player.seek(self.main_cursor_ms)
@@ -1272,7 +1313,7 @@ class MainWindow(QMainWindow):
                 self.show_error(str(exc))
 
     def export_arrangement(self):
-        if not self.reallocate():
+        if not self.require_allocation():
             return
         path, _ = QFileDialog.getSaveFileName(
             self,

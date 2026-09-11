@@ -33,7 +33,7 @@
   "min_frequency": 20,
   "max_frequency": 1200,
   "max_polyphony": 4,
-  "strategy": "stable",
+  "strategy": "intelligent",
   "disable_after_stop": true,
   "lookahead_ms": 1500,
   "port": ""

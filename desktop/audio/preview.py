@@ -1,5 +1,6 @@
 """Bounded PCM synthesis for listening to edited notes without a controller."""
 import numpy as np
+from midi.model import sounding_spans
 from PySide2.QtCore import QObject, QTimer, Signal
 from PySide2.QtMultimedia import QAudio, QAudioDeviceInfo, QAudioFormat, QAudioOutput
 
@@ -11,12 +12,13 @@ def preview_notes(song, speed=1.0, transpose=0, allocation=None):
         return [(a / 1000.0, b / 1000.0, pitch, by_id[uid].velocity)
                 for a, b, motor, uid, pitch in allocation.segments if b > a]
     notes = []
+    spans = sounding_spans(song)
     for n in song.notes:
         part = song.parts[n.part]
         pitch = n.pitch + part.transpose + transpose
         if part.enabled and n.velocity > 0 and 0 <= pitch <= 127 and n.duration > 0:
             notes.append((song.seconds(n.start, speed),
-                          song.seconds(n.start + n.duration, speed), pitch, n.velocity))
+                          song.seconds(spans.get(n.id, (n.start, n.start, 0))[1], speed), pitch, n.velocity))
     return notes
 
 

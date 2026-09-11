@@ -70,27 +70,90 @@ class NoteItem(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setToolTip("%s · velocity %d" % (note_name(note.pitch), note.velocity))
         self.before = None
+        self.segment_items = []
+        self.conflict_items = []
         self.label = QGraphicsSimpleTextItem(self)
         self.label.setBrush(QBrush(QColor("#141b27")))
         self.label.setPos(3, 0)
         self.label.setAcceptedMouseButtons(Qt.NoButton)
+        self.label.setZValue(2)
+        self.pin_outline = QGraphicsRectItem(self.rect(), self)
+        self.pin_outline.setBrush(QBrush(Qt.NoBrush))
+        self.pin_outline.setAcceptedMouseButtons(Qt.NoButton)
+        self.pin_outline.setZValue(1)  # Above segment fills, below the text.
+        self.update_segments()
+        self.update_conflicts()
         self.update_visual()
+
+    def update_conflicts(self):
+        for item in self.conflict_items:
+            if item.scene():
+                item.scene().removeItem(item)
+            item.setParentItem(None)
+        self.conflict_items = []
+        for start, end, reason in self.roll.conflicts.get(self.note.id, []):
+            item = QGraphicsRectItem((start - self.note.start) * self.roll.beat_width, 0,
+                                     (end - start) * self.roll.beat_width,
+                                     self.roll.row_height - 2, self)
+            item.setBrush(QBrush(QColor('#ff6575')))
+            item.setPen(QPen(QColor('#ff304b'), 2))
+            item.setZValue(1.5)  # Over fills and pin outline; keep the label readable.
+            item.setAcceptedMouseButtons(Qt.NoButton)
+            self.conflict_items.append(item)
+
+    def update_segments(self):
+        for item in self.segment_items:
+            if item.scene():
+                item.scene().removeItem(item)
+            item.setParentItem(None)
+        self.segment_items = []
+        allocation, note = self.roll.allocation, self.note
+        if allocation is None:
+            return
+        r = self.roll
+        end = allocation.sound_ends.get(note.id, note.start + note.duration)
+        spans = [(note.start, end, None)] + allocation.visual_segments.get(note.id, [])
+        for start, finish, motor in spans:
+            if finish <= start:
+                continue
+            child = QGraphicsRectItem((start - note.start) * r.beat_width, 1,
+                                      (finish - start) * r.beat_width, r.row_height - 4, self)
+            child.setPen(QPen(Qt.NoPen))
+            child.setBrush(QBrush(QColor('#68717e' if motor is None else MOTOR_COLORS[motor])))
+            child.setAcceptedMouseButtons(Qt.NoButton)
+            self.segment_items.append(child)
 
     def update_visual(self, sounding=False):
         r, note = self.roll, self.note
         index = list(r.song.parts).index(note.part) % 6
         motor = r.allocation.assignments.get(note.id) if r.allocation else None
         skipped = r.allocation.skipped.get(note.id) if r.allocation else None
-        color = QColor("#9a5964" if skipped else MOTOR_COLORS[motor if motor is not None else index])
+        color = QColor('#68717e' if r.allocation else MOTOR_COLORS[index])
         if r.current_part and note.part != r.current_part:
             color.setAlpha(110)
         # Native Qt brushes also render in Nuitka/PySide2, where Python paint
         # overrides on QGraphicsRectItem may be skipped.
-        self.setPen(QPen(QColor("#ffffff") if self.isSelected() or sounding else color.lighter(120),
-                         2 if sounding else 1))
+        if note.motor >= 0:
+            outline = QColor('#ffffff')
+            width = 5 if self.isSelected() or sounding else 4
+        else:
+            outline = QColor('#ffffff') if self.isSelected() or sounding else color.lighter(120)
+            width = 2 if sounding else 1
+        self.pin_outline.setVisible(note.motor >= 0)
+        self.pin_outline.setRect(self.rect())
+        self.pin_outline.setPen(QPen(outline, width))
+        self.setPen(QPen(Qt.NoPen) if note.motor >= 0 else QPen(outline, width))
         self.setBrush(QBrush(color.lighter(130) if sounding else color))
-        self.label.setText(note_name(note.pitch) + (" M%d" % (motor + 1) if motor is not None else ""))
+        label_motor = note.motor if note.motor >= 0 else motor
+        assignment = ' M%d' % (label_motor + 1) if label_motor is not None else ''
+        self.label.setText(note_name(note.pitch) + assignment)
         self.label.setVisible(self.rect().width() >= self.label.boundingRect().width() + 6)
+        self.setToolTip('%s · velocity %d\n%s\n%s\n%s' % (
+            note_name(note.pitch), note.velocity,
+            'Закреплена за M%d; применяется по кнопке пересчёта' % (note.motor + 1) if note.motor >= 0 else 'Авто',
+            'В последнем расчёте: M%d' % (motor + 1) if motor is not None else 'В последнем расчёте не выбрана',
+            '\n'.join('%s (%.3f–%.3f доли)' % (reason, start, end)
+                      for start, end, reason in r.conflicts.get(note.id, [])) or skipped or ''))
 
 
 
@@ -110,6 +173,8 @@ class PianoRoll(QGraphicsView):
         self.song = None
         self.current_part = None
         self.allocation = None
+        self.conflicts = {}
+        self.conflict_ranges = []
         self.position_ms = -1
         self.playhead_beat = 0
         self.read_only = False
@@ -121,6 +186,8 @@ class PianoRoll(QGraphicsView):
 
     def set_song(self, song):
         self.song = song
+        self.conflicts = {}
+        self.conflict_ranges = []
         self.current_part = next(iter(song.parts), None)
         self.allocation = None
         self.undo_stack.clear()
@@ -151,6 +218,19 @@ class PianoRoll(QGraphicsView):
     def commit(self, before, name):
         self.undo_stack.push(EditCommand(self, before, copy.deepcopy(self.song.notes), name))
 
+    def assign_selected(self, motor):
+        if self.read_only or not self.song:
+            return
+        selected = {item.note.id for item in self.note_items if item.isSelected()}
+        before = copy.deepcopy(self.song.notes)
+        for n in self.song.notes:
+            if n.id in selected:
+                n.motor = motor
+        if before != self.song.notes:
+            self.commit(before, 'Назначение нот')
+            for item in self.note_items:
+                item.setSelected(item.note.id in selected)
+
     def drawBackground(self, p, rect):
         p.fillRect(rect, QColor("#121b29"))
         first = max(0, int(rect.top() / self.row_height))
@@ -177,6 +257,19 @@ class PianoRoll(QGraphicsView):
             )
             p.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
 
+        # Show the same conflict interval across registers, behind the notes.
+        p.save()
+        for start, end in self.conflict_ranges:
+            x = self.key_width + start * self.beat_width
+            width = (end - start) * self.beat_width
+            if x + width < rect.left() or x > rect.right():
+                continue
+            p.fillRect(QRectF(x, rect.top(), width, rect.height()), QColor(255, 48, 75, 30))
+            p.setPen(QPen(QColor(255, 48, 75, 150), 1))
+            p.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
+            p.drawLine(int(x + width), int(rect.top()), int(x + width), int(rect.bottom()))
+        p.restore()
+
     def drawForeground(self, p, rect):
         # Keyboard and bar ruler stay pinned to the viewport during scrolling.
         left = self.mapToScene(0, 0).x()
@@ -202,6 +295,14 @@ class PianoRoll(QGraphicsView):
         p.fillRect(
             QRectF(left + self.key_width, top, self.viewport().width(), 20), QColor("#26354a")
         )
+        p.save()
+        p.setClipRect(QRectF(left + self.key_width, top, self.viewport().width() - self.key_width, 20))
+        for begin, end in self.conflict_ranges:
+            x = self.key_width + begin * self.beat_width
+            width = max(2, (end - begin) * self.beat_width)
+            p.fillRect(QRectF(x, top, width, 20), QColor(255, 48, 75, 90))
+            p.fillRect(QRectF(x, top + 17, width, 3), QColor('#ff304b'))
+        p.restore()
         start = max(0, int((rect.left() - self.key_width) / self.beat_width))
         for beat in range(start, int((rect.right() - self.key_width) / self.beat_width) + 1):
             p.setPen(QColor("#8da2ba"))
@@ -389,6 +490,7 @@ class PianoRoll(QGraphicsView):
     def set_allocation(self, allocation):
         self.allocation = allocation
         for item in self.note_items:
+            item.update_segments()
             reason = allocation.skipped.get(item.note.id, "")
             motor = allocation.assignments.get(item.note.id)
             item.setToolTip(
@@ -400,4 +502,17 @@ class PianoRoll(QGraphicsView):
                     reason,
                 )
             )
+        self.refresh_notes()
+
+    def set_conflicts(self, conflicts):
+        self.conflicts = conflicts
+        self.conflict_ranges = []
+        for start, end in sorted({(a, b) for ranges in conflicts.values() for a, b, reason in ranges}):
+            if self.conflict_ranges and start <= self.conflict_ranges[-1][1]:
+                self.conflict_ranges[-1] = (self.conflict_ranges[-1][0], max(end, self.conflict_ranges[-1][1]))
+            else:
+                self.conflict_ranges.append((start, end))
+        for item in self.note_items:
+            item.update_conflicts()
+        self.resetCachedContent()
         self.refresh_notes()

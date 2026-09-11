@@ -235,7 +235,9 @@ uint8_t engine_command(uint8_t cmd, const uint8_t *p, uint8_t len, uint8_t *out,
         if (!half)
             return E_VALUE;
         state.motors[motor].frequency = period_frequency(half);
-        state.motors[motor].note = cmd == C_NOTE ? p[1] : 255;
+        /* Frequency controls also need a pitch for the LCD note history.
+           Label the actual STEP frequency without snapping it to a semitone. */
+        state.motors[motor].note = cmd == C_NOTE ? p[1] : closest_note(state.motors[motor].frequency);
         if (state.motors[motor].active)
             platform_step(motor, half);
         break;
