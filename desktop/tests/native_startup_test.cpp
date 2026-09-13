@@ -14,13 +14,33 @@ int main() {
     StartupLink good(100);
     state_frame(good, 130);
     assert(good.state(130) == S::Ready);
+    StartupLink version2(100);
+    uint8_t state2[86]{}, wire2[93];state2[0]=2;
+    control::encode(wire2,0x40,state2,sizeof(state2));
+    for(uint8_t byte:wire2)version2.feed(byte,140);
+    assert(version2.state(140)==S::Ready);
+    StartupLink version3(100);
+    uint8_t state3[94]{},wire3[101];state3[0]=3;
+    control::encode(wire3,0x40,state3,sizeof(state3));
+    for(uint8_t byte:wire3)version3.feed(byte,140);
+    assert(version3.state(140)==S::Ready);
+    StartupLink malformed3(100);state3[50]=8;
+    control::encode(wire3,0x40,state3,sizeof(state3));
+    for(uint8_t byte:wire3)malformed3.feed(byte,140);
+    assert(malformed3.state(140)==S::Waiting);
+    StartupLink malformed2(100);
+    state2[50]=8; /* Display flags are independent and must be validated. */
+    control::encode(wire2,0x40,state2,sizeof(state2));
+    for(uint8_t byte:wire2)malformed2.feed(byte,140);
+    assert(malformed2.state(140)==S::Waiting);
     StartupLink missing(100);
     state_frame(missing, 110, true);
     state_frame(missing, 150, false, true);
     assert(missing.state(1099) == S::Waiting);
     assert(missing.state(1100) == S::Failed);
+    assert(missing.probe_due(1100));
     state_frame(missing, 1101);
-    assert(missing.state(1101) == S::Failed);
+    assert(missing.state(1101) == S::Ready);
     StartupLink ack_only(0);
     uint8_t frame[8], ack=0;
     control::encode(frame, 0x51, &ack, 1);
@@ -42,7 +62,12 @@ int main() {
             retry.probe_sent(now);++attempts;
         }
     }
-    assert(attempts==50&&retry.state(1000)==S::Failed);
+    assert(attempts==51&&retry.state(1000)==S::Failed);
+    state_frame(retry,20000,true);
+    assert(retry.state(20000)==S::Failed&&retry.probe_due(20000));
+    retry.probe_sent(20000);
+    state_frame(retry,20027);
+    assert(retry.state(20027)==S::Ready&&!retry.probe_due(20040));
     StartupLink recovery(0);
     recovery.probe_sent(0);state_frame(recovery,5,true);
     assert(recovery.probe_due(20));recovery.probe_sent(20);

@@ -255,7 +255,7 @@ def load_project(path):
 
 
 def demo_song():
-    song = Song(title="Clockwork • демонстрация")
+    song = Song(title="Clockwise • демонстрация")
     song.parts = {
         str(i): Part(str(i), name, i, i, program)
         for i, (name, program) in enumerate([("Мелодия", 0), ("Бас", 32), ("Арпеджио", 10)])

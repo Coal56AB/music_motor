@@ -29,6 +29,8 @@ class Command(IntEnum):
     EVENTS = 18
     CLEAR = 19
     QUEUE = 20
+    RAW_EVENTS = 22
+    RAW_SEEK = 23
     SONG_BEGIN = 48
     SONG_DATA = 49
     SONG_COMMIT = 50
@@ -131,6 +133,7 @@ def decode_status(data):
                 enabled=bool(flags & 1),
                 active=bool(flags & 2),
                 direction=bool(flags & 4),
+                display_hold=bool(flags & 8),
                 note=note,
                 frequency=mhz / 1000,
             )

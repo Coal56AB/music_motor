@@ -124,7 +124,7 @@ class MotorCard(QFrame):
         self.speed_bar.setTextVisible(False)
         self.speed_bar.setMinimumWidth(70)
         self.speed_bar.setFixedHeight(92)
-        self.speed_bar.setToolTip("Частота STEP: от 20 до 4000 Гц, логарифмическая шкала")
+        self.speed_bar.setToolTip("Частота STEP: от 20 до 1200 Гц, логарифмическая шкала")
         self.speed_bar.setStyleSheet(
             "QProgressBar {border:1px solid #34475e;border-radius:8px;background:#101a28}"
             "QProgressBar::chunk {background:%s;border-radius:7px}" % MOTOR_COLORS[index]
@@ -135,7 +135,7 @@ class MotorCard(QFrame):
         for column in range(3):
             controls.setColumnStretch(column, 1)
         self.hz = FrequencyInput()
-        self.hz.setRange(20, 4000)
+        self.hz.setRange(20, 1200)
         self.hz.setDecimals(3)
         self.hz.setValue(440)
         self.hz.setSuffix(" Гц")
@@ -157,7 +157,7 @@ class MotorCard(QFrame):
             lambda *_args: self.command.emit(index, "direction", self.direction.currentIndex())
         )
         self.enable = QCheckBox("ENABLE")
-        self.enable.setToolTip("Разрешить ток в обмотках. Без STEP двигатель удерживает вал.")
+        self.enable.setToolTip("Отдельная проверка ENABLE. «Пуск» включает его автоматически, «Стоп» выключает.")
         self.enable.clicked.connect(
             lambda *_args: self.command.emit(index, "enable", self.enable.isChecked())
         )

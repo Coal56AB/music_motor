@@ -65,6 +65,25 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void watchdog_window(uint32_t prescaler, uint32_t reload)
+{
+  IWDG->KR = 0xAAAAu;
+  IWDG->KR = 0x5555u;
+  IWDG->PR = prescaler;
+  IWDG->RLR = reload;
+  while (IWDG->SR != 0u) {
+    /* No refresh here: a stuck peripheral must also trigger recovery. */
+  }
+  IWDG->KR = 0xAAAAu;
+}
+static void watchdog_start(void)
+{
+  /* Independent LSI; pause only when halted by a debugger. */
+  DBGMCU->CR |= DBGMCU_CR_DBG_IWDG_STOP;
+  IWDG->KR = 0xCCCCu;
+  /* /16 * 500 / 40 kHz = 200 ms: covers the 100 ms HSE timeout. */
+  watchdog_window(2u, 499u);
+}
 
 /* USER CODE END 0 */
 
@@ -76,7 +95,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  watchdog_start();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -104,6 +123,8 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   platform_init();
+  /* Both UARTs are initialized. Restore the normal main-loop watchdog. */
+  watchdog_window(4u, 0xFFFu); /* ~6.55 s at nominal 40 kHz LSI. */
   engine_init();
   protocol_init();
   /* USER CODE END 2 */
@@ -117,6 +138,9 @@ int main(void)
     /* USER CODE BEGIN 3 */
     protocol_poll();
     engine_tick();
+    /* Only a completed main-loop iteration proves the application is alive.
+     * Never refresh from SysTick, UART IRQs or Error_Handler. */
+    IWDG->KR = 0xAAAAu;
   }
   /* USER CODE END 3 */
 }
@@ -328,7 +352,9 @@ static void MX_USART1_UART_Init(void)
 {
 
   /* USER CODE BEGIN USART1_Init 0 */
-
+  /* /4 * 20 / 40 kHz = 2 ms for USART1 and platform_init's USART2 setup.
+   * This checks local initialization, not the arrival of an ESP32 reply. */
+  watchdog_window(0u, 19u);
   /* USER CODE END USART1_Init 0 */
 
   /* USER CODE BEGIN USART1_Init 1 */

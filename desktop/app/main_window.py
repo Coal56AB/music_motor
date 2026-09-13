@@ -32,9 +32,11 @@ from PySide2.QtWidgets import (
     QLineEdit,
     QInputDialog,
     QShortcut,
+    QMenu,
+    QFrame,
 )
 from serial.tools import list_ports
-from app.settings import load_settings, save_settings, ROOT
+from app.settings import load_settings, save_settings, ROOT, songs_directory
 from app.music_math import MICROSTEPS, note_name, note_frequency
 from app.playback import StreamPlayer, short_gap_note
 from app.device_songs import DeviceSongs
@@ -45,6 +47,7 @@ from widgets.piano_roll import PianoRoll, NoteItem
 from protocol.client import Client
 from protocol.wire import Command as C, Error
 from midi.model import load_midi, save_midi, demo_song, save_project, load_project, Part, Song, Note
+from midi.library import discover_songs
 from midi.allocator import allocate, pin_conflict_spans, STRATEGIES, MOTOR_COLORS
 from audio.transcribe import transcribe
 from audio.preview import PreviewPlayer, preview_notes
@@ -157,6 +160,24 @@ class MainWindow(QMainWindow):
         self.version = QLabel("Прошивка —")
         link.addWidget(self.version)
         root.addLayout(link)
+        self.notice = QFrame()
+        self.notice.setObjectName('errorNotice')
+        notice_row = QHBoxLayout(self.notice)
+        notice_text = QVBoxLayout()
+        self.notice_title = QLabel()
+        self.notice_title.setObjectName('noticeTitle')
+        self.notice_message = QLabel()
+        self.notice_hint = QLabel()
+        for label in (self.notice_title, self.notice_message, self.notice_hint):
+            label.setTextFormat(Qt.PlainText)
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            notice_text.addWidget(label)
+        notice_row.addLayout(notice_text, 1)
+        notice_row.addWidget(button('UART-журнал', lambda: self.tabs.setCurrentWidget(self.log.parentWidget())))
+        notice_row.addWidget(button('Закрыть', self.notice.hide))
+        root.addWidget(self.notice)
+        self.notice.hide()
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
         self.build_motors()
@@ -176,7 +197,8 @@ class MainWindow(QMainWindow):
         self.player.failed.connect(self.show_error)
         self.preview.changed.connect(self.preview_state)
         self.preview.progress.connect(self.preview_progress)
-        self.preview.failed.connect(lambda message: self.statusBar().showMessage(message, 10000))
+        self.preview.failed.connect(lambda message: self.show_notice('Ошибка прослушивания', message,
+            'Проверьте выбранное устройство вывода звука и повторите прослушивание.'))
         self.set_song(self.song)
         self.refresh_ports()
         self.on_connection(False)
@@ -248,7 +270,7 @@ class MainWindow(QMainWindow):
         self.activate_button = button("ACTIVATE", self.activate_drivers, "primary")
         self.reset_button.setProperty("commonAction", True)
         self.activate_button.setProperty("commonAction", True)
-        self.activate_button.setToolTip("Снять общие RESET и SLEEP. ENABLE и STEP включаются отдельно.")
+        self.activate_button.setToolTip("Снять общие RESET и SLEEP. Кнопка «Пуск» включает ENABLE и STEP.")
         self.reset_button.setMinimumHeight(36)
         self.activate_button.setMinimumHeight(36)
         self.reset_button.setMinimumWidth(110)
@@ -281,6 +303,16 @@ class MainWindow(QMainWindow):
         ]:
             tools.addWidget(button(text, slot))
         tools.addWidget(button("Экспорт для моторов", self.export_arrangement))
+        examples_button=QPushButton("Примеры")
+        examples_menu=QMenu(examples_button)
+        examples_menu.addAction("Clockwise").triggered.connect(lambda *_: self.set_song(demo_song()))
+        examples_button.setMenu(examples_menu)
+        tools.addWidget(examples_button)
+        self.songs_button = QPushButton("Композиции")
+        self.songs_menu = QMenu(self.songs_button)
+        self.songs_menu.aboutToShow.connect(self.refresh_songs_menu)
+        self.songs_button.setMenu(self.songs_menu)
+        tools.addWidget(self.songs_button)
         tools.addStretch()
         root.addLayout(tools)
         self.preview_controls = QWidget()
@@ -381,7 +413,7 @@ class MainWindow(QMainWindow):
         rl.addLayout(edit)
         rl.addWidget(self.roll, 1)
         hint = QLabel(
-            "Линейка времени: курсор · Пробел: слушать / пауза · Двойной щелчок: добавить / velocity · Перетащить: переместить · Правый край: длительность · Delete: удалить"
+            "Щелчок в поле / линейка: курсор · Пробел: слушать / пауза · Двойной щелчок: добавить / velocity · Перетащить: переместить · Правый край: длительность · Delete: удалить"
         )
         hint.setWordWrap(True)
         hint.setObjectName("subtitle")
@@ -400,6 +432,7 @@ class MainWindow(QMainWindow):
             "Распознавание приблизительное. Сложный микс, вокал, ударные и гармоники могут давать ошибки.\nСпектральный анализ не разделяет запись на реальные инструменты; исправляйте результат в piano roll."
         )
         warning.setWordWrap(True)
+        warning.setObjectName('warningText')
         root.addWidget(warning)
         form = QFormLayout()
         self.audio_path = QLineEdit()
@@ -476,7 +509,7 @@ class MainWindow(QMainWindow):
         self.transpose = spin(-48, 48, 0)
         form.addRow("Транспонирование композиции", self.transpose)
         self.low_hz = spin(20, self.config['max_frequency'] - 1, self.config["min_frequency"])
-        self.high_hz = spin(self.config['min_frequency'] + 1, 4000, self.config["max_frequency"])
+        self.high_hz = spin(self.config['min_frequency'] + 1, 1200, self.config["max_frequency"])
         self.low_hz.valueChanged.connect(lambda *_: self.high_hz.setMinimum(self.low_hz.value() + 1))
         self.high_hz.valueChanged.connect(lambda *_: self.low_hz.setMaximum(self.high_hz.value() - 1))
         self.octave = QCheckBox("Переносить недоступные ноты по октавам")
@@ -484,9 +517,6 @@ class MainWindow(QMainWindow):
         form.addRow(self.octave)
         self.drums = QCheckBox("Разрешить ударный канал (также включите его партию)")
         form.addRow(self.drums)
-        self.disable_stop = QCheckBox("Отключать ENABLE после остановки")
-        self.disable_stop.setChecked(self.config["disable_after_stop"])
-        form.addRow(self.disable_stop)
         root.addWidget(box)
         self.playback_options = box
         row = QHBoxLayout()
@@ -575,10 +605,10 @@ class MainWindow(QMainWindow):
         self.motor_layout.setCurrentIndex(self.motor_layout.findData(self.config.get("motor_layout", "horizontal")))
         self.motor_layout.activated[int].connect(lambda *_: self.change_motor_layout())
         appearance_form.addRow("Вид карточек", self.motor_layout)
-        self.note_hold = spin(0, 5000, self.config.get('note_hold_ms', 250))
+        self.note_hold = spin(500, 500, 500)
         self.note_hold.setSuffix(" мс")
         self.note_hold.setSingleStep(50)
-        self.note_hold.setToolTip("Паузы не длиннее порога скрываются по данным MIDI. Более длинные гасят индикацию сразу. 0 — показывать все паузы.")
+        self.note_hold.setToolTip("Паузы до 500 мс сохраняют индикацию, если следующее вступление уже известно.")
         appearance_form.addRow("Скрывать паузы MIDI до", self.note_hold)
         self.low_hz.setSuffix(' Гц')
         self.high_hz.setSuffix(' Гц')
@@ -638,7 +668,7 @@ class MainWindow(QMainWindow):
         self.save_settings_button = button("Применить и сохранить настройки", self.persist, "primary")
         root.addWidget(self.save_settings_button, 0, Qt.AlignLeft)
         note = QLabel(
-            "Перед ручным запуском снимите общие SLEEP и RESET, затем включите ENABLE нужного двигателя.\nSTOP ALL останавливает все импульсы и отключает драйверы."
+            "Перед ручным запуском снимите общие SLEEP и RESET. Кнопка «Пуск» автоматически включает ENABLE двигателя.\nSTOP ALL останавливает все импульсы и отключает драйверы."
         )
         note.setWordWrap(True)
         root.addWidget(note)
@@ -727,8 +757,12 @@ class MainWindow(QMainWindow):
         self.low_hz.setEnabled(not playing)
         self.high_hz.setEnabled(not playing)
         for card in self.cards:
-            gap_note = short_gap_note(self.player.allocation.segments, card.index, self.player.position,
-                                      self.config.get('note_hold_ms', 250)) if self.player.state == 'playing' and self.player.allocation else None
+            gap_note = None
+            if self.client.sim and self.player.state == 'playing' and self.player.allocation:
+                gap_note = short_gap_note(self.player.allocation.segments, card.index, self.player.position, 500)
+            elif not self.client.sim:
+                motor = self.latest_status['motors'][card.index] if self.latest_status else {}
+                gap_note = motor.get('note') if motor.get('display_hold') else None
             card.update_status(self.latest_status, self.client.connected, self.link_error, playing,
                                self.player.state == 'playing', gap_note,
                                self.player.allocation.note_range if playing and self.player.allocation else None)
@@ -759,6 +793,7 @@ class MainWindow(QMainWindow):
             self.client.send(C.START, bytes([m]))
         elif command == "stop":
             self.client.send(C.STOP, bytes([m]))
+            self.client.send(C.ENABLE, bytes([m, 0]))
         elif command == "direction":
             self.config["directions"][m] = value
             self.direction_settings[m].setCurrentIndex(value)
@@ -1036,6 +1071,8 @@ class MainWindow(QMainWindow):
             text = 'Красным отмечены пересечения закреплений (%d нот). ' % len(self.roll.conflicts) + text
         self.allocation_label.setText(text)
         self.editor_allocation_status.setText(text)
+        for label in (self.allocation_label, self.editor_allocation_status):
+            label.setStyleSheet('color:#ff8d99;font-weight:600')
 
     def update_pin_conflicts(self):
         self.roll.set_conflicts(pin_conflict_spans(
@@ -1074,7 +1111,9 @@ class MainWindow(QMainWindow):
             return False
         self.allocation = allocation
         self.allocation_dirty = False
-        self.editor_allocation_status.setText('Распределение актуально. Серые участки не играют.')
+        self.editor_allocation_status.setText('Предварительное распределение актуально. При игре моторы назначает контроллер.')
+        for label in (self.allocation_label, self.editor_allocation_status):
+            label.setStyleSheet('')
         self.roll.set_allocation(self.allocation)
         self.midi_overview.set_allocation(self.allocation, self.config["installed_mask"])
         self.main_cursor_ms = min(self.main_cursor_ms, max(0, self.allocation.duration_ms - 1))
@@ -1093,6 +1132,12 @@ class MainWindow(QMainWindow):
             )
         )
         by_id = {n.id: n for n in self.song.notes}
+        if self.allocation.skipped:
+            self.allocation_label.setStyleSheet('color:#ff8d99;font-weight:600')
+            self.allocation_label.setToolTip('Проверьте список пропусков ниже: увеличьте полифонию или число доступных моторов, измените диапазон либо закрепления партий.')
+        else:
+            self.allocation_label.setToolTip('')
+        self.skip_list.setStyleSheet('color:#ff8d99' if self.allocation.skipped else '')
         self.skip_list.setPlainText(
             "\n".join(
                 "%s @ %.2f: %s" % (note_name(by_id[uid].pitch), by_id[uid].start, reason)
@@ -1302,6 +1347,43 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self.show_error(str(exc))
 
+    def song_folder(self):
+        return Path(self.config.get('songs_directory') or songs_directory())
+
+    def choose_songs_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Папка с композициями", str(self.song_folder()))
+        if folder:
+            self.config['songs_directory'] = folder
+            save_settings(self.config, self.settings_path)
+            self.refresh_songs_menu()
+
+    def refresh_songs_menu(self):
+        menu = self.songs_menu
+        menu.clear()
+        menu.addAction("Выбрать папку…").triggered.connect(self.choose_songs_folder)
+        folder = self.song_folder()
+        menu.addAction(str(folder)).setEnabled(False)
+        menu.addSeparator()
+        try:
+            songs = discover_songs(folder)
+        except OSError as exc:
+            menu.addAction("Не удалось прочитать папку: " + str(exc)).setEnabled(False)
+            return
+        if not songs:
+            menu.addAction("Нет композиций (.mid, .midi, .motor.json)").setEnabled(False)
+        for name, path in songs:
+            menu.addAction(name).triggered.connect(lambda checked=False, p=path: self.open_library_song(p))
+
+    def open_library_song(self, path):
+        try:
+            song = load_project(path) if str(path).lower().endswith('.motor.json') else load_midi(path)
+        except Exception as exc:
+            self.show_error(str(exc)); return
+        self.player.stop()
+        self.poly.setValue(6)
+        self.strategy.setCurrentIndex(self.strategy.findData('stable'))
+        self.set_song(song)
+
     def save_midi(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Сохранить MIDI", self.song.title + ".mid", "MIDI (*.mid)"
@@ -1422,7 +1504,30 @@ class MainWindow(QMainWindow):
     def append_log(self, text):
         self.log.appendPlainText(datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3] + " " + text)
 
+    def show_notice(self, heading, text, hint):
+        self.notice_title.setText(heading)
+        self.notice_message.setText(str(text))
+        self.notice_hint.setText('Что делать: ' + hint)
+        self.notice.show()
+
     def show_error(self, text):
+        text = str(text)
+        lower = text.lower()
+        if 'пересчит' in lower:
+            hint = 'Откройте MIDI-редактор и нажмите «Пересчитать распределение», затем повторите действие.'
+        elif 'нет нот' in lower:
+            hint = 'Проверьте включённые партии и моторы, диапазон частот и пересчитайте распределение.'
+        elif 'сохранени' in lower and ('дожд' in lower or 'заверш' in lower):
+            hint = 'Дождитесь завершения сохранения в устройство, затем повторите действие.'
+        elif 'остановите' in lower:
+            hint = 'Нажмите «Стоп», дождитесь остановки и повторите действие.'
+        elif any(word in lower for word in ('ack', 'uart', 'соединени', 'подключ', 'port', 'порт', 'access', 'доступ')):
+            hint = 'Проверьте кабель и COM-порт, закройте другие программы с этим портом и подключитесь заново. Подробности — в UART-журнале.'
+        elif 'аудиофайл' in lower:
+            hint = 'Во вкладке «Импорт аудио» выберите существующий файл и повторите анализ.'
+        else:
+            hint = 'Проверьте указанные в сообщении данные или настройки и повторите действие. Если причина неясна, скопируйте сообщение и UART-журнал.'
+        self.show_notice('Ошибка / действие не выполнено', text, hint)
         self.link_error = True
         self.statusBar().showMessage("Ошибка: " + text, 20000)
         if hasattr(self, "log"):
@@ -1448,7 +1553,7 @@ class MainWindow(QMainWindow):
             max_frequency=self.high_hz.value(),
             max_polyphony=self.poly.value(),
             strategy=self.strategy.currentData(),
-            disable_after_stop=self.disable_stop.isChecked(),
+            disable_after_stop=True,
         )
 
     def persist(self):
@@ -1460,7 +1565,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.audio_thread:
-            self.statusBar().showMessage("Дождитесь окончания аудиоанализа перед закрытием.")
+            self.show_notice('Предупреждение', 'Аудиоанализ ещё выполняется.',
+                             'Дождитесь окончания анализа, затем закройте Studio.')
             event.ignore()
             return
         self.preview.stop()

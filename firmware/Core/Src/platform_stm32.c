@@ -2,6 +2,7 @@
 #include "platform.h"
 #include "main.h"
 #include "half_duplex_wire.h"
+#include "esp_tx_queue.h"
 typedef struct {
     GPIO_TypeDef *port;
     uint16_t pin;
@@ -12,8 +13,9 @@ static volatile uint16_t pending_half[MOTOR_COUNT], half[MOTOR_COUNT];
 static volatile uint8_t active[MOTOR_COUNT], high[MOTOR_COUNT], oc_error;
 static volatile uint8_t rx[UART_RING_SIZE], tx[UART_RING_SIZE], uart_error;
 static volatile uint16_t rh, rt, th, tt;
-static volatile uint8_t esp_rx[UART_RING_SIZE], esp_tx[UART_RING_SIZE], esp_uart_error;
-static volatile uint16_t esp_rh, esp_rt, esp_th, esp_tt;
+static volatile uint8_t esp_rx[UART_RING_SIZE], esp_uart_error;
+static volatile uint16_t esp_rh, esp_rt;
+static EspTxQueue esp_out;
 static uint8_t esp_reply_frame[HD_MAX_FRAME];
 static volatile uint16_t esp_reply_size, esp_reply_offset;
 static volatile uint32_t esp_rx_times[UART_RING_SIZE];
@@ -236,35 +238,26 @@ int platform_esp_read(void) {
     return b;
 }
 void platform_esp_write(const uint8_t *data, uint16_t n) {
-    uint32_t key = platform_lock();
-    if (n > ((esp_tt - esp_th - 1u) & (UART_RING_SIZE - 1u))) {
-        esp_uart_error = 1;
-        platform_unlock(key);
-        return;
-    }
-    for (uint16_t i = 0; i < n; i++) {
-        esp_tx[esp_th] = data[i];
-        esp_th = (esp_th + 1) & (UART_RING_SIZE - 1u);
-    }
-    /* Queued only. The master must explicitly grant a response. */
-    platform_unlock(key);
+    /* TX saturation is not an RX error: it must never discard an incoming
+     * Note Off or heartbeat. Control replies are retried if necessary.
+     * Both queue ends run here in the main loop; keep UART/STEP IRQs enabled. */
+    (void)esp_tx_push(&esp_out,data,n);
 }
 void platform_esp_reply(uint8_t sequence) {
     uint8_t payload[HD_MAX_PAYLOAD];unsigned n=0;
     /* No unsolicited transmission; a stale grant must never start late. */
     if(platform_ms()-esp_read_at>HD_REPLY_DEADLINE_MS || (USART2->CR1 & USART_CR1_TE)) {
-        esp_tt=esp_th;return;
+        return;
     }
-    while(esp_tt!=esp_th && n<sizeof(payload)) {
-        payload[n++]=esp_tx[esp_tt];esp_tt=(esp_tt+1)&(UART_RING_SIZE-1u);
-    }
+    n=esp_tx_pop(&esp_out,payload,sizeof(payload));
     esp_reply_size=(uint16_t)hd_encode(esp_reply_frame,HD_REPLY,sequence,payload,n);
     esp_reply_offset=0;esp_reply_at=esp_read_at;esp_reply_pending=1;
 }
 void platform_esp_poll(void) {
     if(!esp_reply_pending)return;
     uint32_t age=platform_ms()-esp_reply_at;
-    if(age<1)return; /* One millisecond turnaround for the master. */
+    /* ESP keeps RX enabled during TX and rejects its echo by frame type.
+     * No task-loop turnaround delay is needed after the complete request. */
     esp_reply_pending=0;
     if(age>HD_REPLY_DEADLINE_MS)return;
     uint32_t key=platform_lock();

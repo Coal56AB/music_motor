@@ -2,16 +2,16 @@
 #define HALF_DUPLEX_WIRE_H
 #include <stdint.h>
 #include <string.h>
-#define HD_BAUD 230400u
+#define HD_BAUD 460800u
 #define HD_MAX_PAYLOAD 240u
 #define HD_MAX_FRAME (HD_MAX_PAYLOAD + 7u)
 #define HD_REQUEST 1u
 #define HD_REPLY 2u
-#define HD_REPLY_DEADLINE_MS 3u
-#define HD_MASTER_TIMEOUT_MS 20u
+#define HD_REPLY_DEADLINE_MS 12u
+#define HD_MASTER_TIMEOUT_MS 30u
 /* C7 3A TYPE SEQ LENGTH PAYLOAD CRC16_LE. The master alone starts transactions.
- * Slave starts its reply within 3 ms of the final request byte or stays silent.
- * At 230400 the largest reply takes <10.8 ms; master waits 20 ms before retrying.
+ * Slave starts within 12 ms of the final request byte or stays silent.
+ * At 460800 request + grant + reply take <23 ms; master waits 30 ms.
  * CRC and sequence reject echoes, corruption and stale responses. */
 static inline uint16_t hd_crc(const uint8_t *p, unsigned n) {
     uint16_t c=0xffff;

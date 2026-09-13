@@ -96,5 +96,35 @@ class EditorTests(unittest.TestCase):
         w.listen()
         self.assertIs(w.allocation,original)
 
+    def test_song_start_and_seek_do_not_set_microstep(self):
+        from protocol.wire import Command as C
+        w=self.window
+        commands=[]
+        w.client.send=lambda command,*args,**kwargs: commands.append(command)
+        w.player.allocation=w.allocation
+        w.player.config=w.config.copy()
+        w.player.config['microstep_raw']=7
+        for offset in (0,250):
+            commands[:]=[]
+            w.player.offset=offset
+            w.player.begin()
+            self.assertIn(C.CLEAR,commands)
+            self.assertNotIn(C.MICROSTEP,commands)
+            self.assertNotIn(C.ENABLE,commands)
+
+    def test_manual_buttons_explicitly_control_enable(self):
+        from protocol.wire import Command as C
+        w=self.window
+        commands=[]
+        w.client.send=lambda cmd,payload=b'',**kw: commands.append((cmd,payload))
+        w.manual_command(0,'start',True)
+        self.assertEqual(commands,[(C.START,b'\x00')])
+        commands[:]=[]
+        w.manual_command(0,'stop',False)
+        self.assertEqual(commands,[(C.STOP,b'\x00'),(C.ENABLE,b'\x00\x00')])
+        commands[:]=[]
+        w.manual_command(0,'enable',True)
+        self.assertEqual(commands,[(C.ENABLE,b'\x00\x01')])
+
 
 if __name__=='__main__':unittest.main()

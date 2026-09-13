@@ -23,7 +23,8 @@ class DeviceSongs(QObject):
             self.failed.emit('Выберите место от 1 до 10');return
         if not self.client.connected or self.client.sim:
             self.failed.emit('Подключите STM32 к компьютеру');return
-        self.data=b''.join(event_bytes(*event) for event in allocation.events)
+        raw = allocation.raw_events is not None
+        self.data=b''.join(event_bytes(*event) for event in (allocation.raw_events if raw else allocation.events))
         if not self.data or len(self.data)>192512:
             self.failed.emit('Мелодия слишком велика: максимум 19 251 событие');return
         name=title.encode('utf-8')[:31].decode('utf-8','ignore').encode('utf-8').ljust(32,b'\0')
@@ -31,6 +32,7 @@ class DeviceSongs(QObject):
         if not mask:self.failed.emit('Не выбраны моторы');return
         dirs=sum(int(bool(d))<<i for i,d in enumerate(config['directions']))
         metadata=struct.pack('<BIIIBBB',slot,len(self.data)//10,allocation.duration_ms,zlib.crc32(self.data),mask,config['microstep_raw'],dirs)+name
+        if raw: metadata += b'\x01'
         self.active=True;self.epoch+=1;self.offset=0
         self.progress.emit('Начало сохранения',0)
         self.submit(C.SONG_BEGIN,metadata)

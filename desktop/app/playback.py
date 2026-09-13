@@ -34,7 +34,7 @@ class StreamPlayer(QObject):
         self.events = []
         self.inflight = False
         self.free = 256
-        self.disable_after_stop = True
+        self.capacity = 256
         self.lookahead = 1500
         self.epoch = 0
         self.before_start = None
@@ -50,7 +50,6 @@ class StreamPlayer(QObject):
             self.failed.emit("Сначала подключите UART или симулятор")
             return
         self.allocation = allocation
-        self.disable_after_stop = config["disable_after_stop"]
         self.lookahead = config["lookahead_ms"]
         self.config = config.copy()
         self.offset = max(0, min(int(start_ms), max(0, allocation.duration_ms - 1)))
@@ -67,6 +66,7 @@ class StreamPlayer(QObject):
     def begin(self):
         self.epoch += 1
         epoch = self.epoch
+        self.raw_mode = self.allocation.raw_events is not None and not self.client.sim
         self.events = [
             (t - self.offset, m, op, v)
             for t, m, op, v in self.allocation.events
@@ -79,22 +79,39 @@ class StreamPlayer(QObject):
         # Reconstructed voices precede original events at the seek boundary.
         self.events = restored + self.events
         self.events.sort(key=lambda e: e[0])
+        if self.raw_mode:
+            # Replay prefix silently on STM32 to reconstruct sustain and voice history.
+            self.events = self.allocation.raw_events
         self.index = 0
-        self.free = 256
+        self.free = 18 if self.raw_mode else 256
         self.inflight = False
         self.position = self.offset
         self.set_state("preparing")
         self.client.send(C.STREAM_STOP, b"\x01", urgent=True)
         self.client.send(C.SET_MASK, bytes([self.config["installed_mask"]]))
-        self.client.send(C.MICROSTEP, bytes([self.config["microstep_raw"]]))
         self.client.send(C.RESET, b"\x00")
         self.client.send(C.SLEEP, b"\x00")
-        participating = self.config["installed_mask"] & self.config["music_mask"]
         for i in range(6):
             if self.config["installed_mask"] & (1 << i):
                 self.client.send(C.DIR, bytes([i, self.config["directions"][i]]))
-                self.client.send(C.ENABLE, bytes([i, int(bool(participating & (1 << i)))]))
-        self.client.send(C.CLEAR, callback=lambda _: self.prefill(epoch))
+        self.client.send(C.CLEAR, callback=lambda _: self.prepare_seek(epoch))
+
+    def prepare_seek(self, epoch):
+        if epoch != self.epoch:
+            return
+        def capacity_received(data):
+            if epoch != self.epoch:
+                return
+            self.capacity = struct.unpack('<H',data)[0]
+            self.free = max(0,self.capacity//13-1) if self.raw_mode else self.capacity
+            self.seek_ready(epoch)
+        self.client.send(C.QUEUE,callback=capacity_received)
+
+    def seek_ready(self, epoch):
+        if self.raw_mode:
+            self.client.send(C.RAW_SEEK, struct.pack('<I', self.offset), callback=lambda _: self.prefill(epoch))
+        else:
+            self.prefill(epoch)
 
     def prefill(self, epoch):
         if epoch != self.epoch:
@@ -104,18 +121,21 @@ class StreamPlayer(QObject):
     def fill(self, initial=False):
         if self.inflight or self.state not in ("preparing", "playing"):
             return
-        if self.index >= len(self.events) or self.free < 24:
+        if self.index >= len(self.events) or self.free < (1 if self.raw_mode else 24):
             if initial:
                 self.start_stream()
             return
         # Fill until either the time horizon is covered or ~192 slots are used.
         local_position = self.position - self.offset
         buffered_until = self.events[self.index - 1][0] if self.index else -1
-        if self.index and (buffered_until >= local_position + self.lookahead or self.free <= 64):
+        if self.raw_mode:
+            buffered_until -= self.offset
+        complete = not self.raw_mode or (self.index and self.events[self.index-1][2] & 128)
+        if self.index and complete and (buffered_until >= local_position + max(750,self.lookahead) or self.free <= (1 if self.raw_mode else 64)):
             if initial:
                 self.start_stream()
             return
-        batch = self.events[self.index : self.index + min(24, self.free)]
+        batch = self.events[self.index : self.index + min(4 if self.raw_mode else 24, self.free)]
         epoch = self.epoch
         self.inflight = True
 
@@ -128,7 +148,7 @@ class StreamPlayer(QObject):
             self.fill(initial)
 
         self.client.send(
-            C.EVENTS, b"".join(event_bytes(*event) for event in batch), callback=accepted
+            C.RAW_EVENTS if self.raw_mode else C.EVENTS, b"".join(event_bytes(*event) for event in batch), callback=accepted
         )
 
     def start_stream(self):
@@ -151,7 +171,9 @@ class StreamPlayer(QObject):
     def on_status(self, status):
         if self.state == "playing":
             self.position = status["position"] + self.offset
-            self.free = 256 - status["used"]
+            self.free = max(0,self.capacity - status["used"])
+            if self.raw_mode:
+                self.free = max(0, self.free // 13 - 1)
             self.progress.emit(self.position, status["used"])
             if not status["running"]:
                 if status["error"]:
@@ -167,7 +189,7 @@ class StreamPlayer(QObject):
         self.offset = self.position
         self.epoch += 1
         self.set_state("paused")
-        self.client.send(C.STREAM_STOP, bytes([int(self.disable_after_stop)]), urgent=True)
+        self.client.send(C.STREAM_STOP, b"\x01", urgent=True)
 
     def resume(self):
         if self.state == "paused":
@@ -181,7 +203,7 @@ class StreamPlayer(QObject):
             if emergency:
                 self.client.emergency()
             else:
-                self.client.send(C.STREAM_STOP, bytes([int(self.disable_after_stop if disable is None else disable)]), urgent=True)
+                self.client.send(C.STREAM_STOP, b"\x01", urgent=True)
 
     def on_fault(self, text):
         if self.state != "stopped":

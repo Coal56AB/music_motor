@@ -63,15 +63,17 @@ class SimulatedSTM32:
         while self.queue and self.queue[0][0] <= self.position:
             at, m, op, value = self.queue.popleft()
             if op == 2:
-                self.stop(False)
+                self.stop(True)
                 return
             if op == 0:
                 self.motors[m]["active"] = False
+                self.motors[m]["enabled"] = False
             else:
-                if not self.motors[m]["enabled"] or self.sleep or self.reset:
+                if self.sleep or self.reset:
                     self.fault(E.STATE)
                     return
                 self.motors[m].update(
+                    enabled=True,
                     active=True,
                     frequency=actual_frequency(value / 1000),
                     note=round(69 + 12 * math.log2(value / 440000)),
@@ -139,14 +141,15 @@ class SimulatedSTM32:
             if (
                 self.sleep
                 or self.reset
-                or not self.motors[motor]["enabled"]
                 or self.clock() < self.ready_at
             ):
                 return E.STATE, b""
+            self.motors[motor]["enabled"] = True
             self.motors[motor]["active"] = True
             self.motors[motor]["frequency"] = actual_frequency(self.motors[motor]["frequency"])
         elif cmd == C.STOP:
             self.motors[motor]["active"] = False
+            self.motors[motor]["enabled"] = False
         elif cmd in (C.FREQUENCY, C.NOTE):
             if cmd == C.NOTE and p[1] > 127:
                 return E.VALUE, b""
@@ -188,12 +191,13 @@ class SimulatedSTM32:
                 return E.STATE, b""
             for m in self.motors:
                 m["active"] = False
+                m["enabled"] = False
             self.running, self.position, self.error = True, 0, 0
             self.origin = self.clock() + 0.100
         elif cmd == C.STREAM_STOP:
             if motor > 1:
                 return E.VALUE, b""
-            self.stop(bool(motor))
+            self.stop(True)
         elif cmd == C.CLEAR:
             if self.running:
                 return E.STATE, b""

@@ -1,7 +1,7 @@
 {
   "baudrate": 115200,
   "motor_layout": "horizontal",
-  "note_hold_ms": 250,
+  "note_hold_ms": 500,
   "installed_mask": 15,
   "music_mask": 15,
   "names": [

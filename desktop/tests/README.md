@@ -1,5 +1,17 @@
 # Проверка MIDI и распределения
 
+Новый аппаратный тракт проверяется непосредственно с `firmware/Core/Src/engine.c`:
+
+```powershell
+cl /nologo /utf-8 /std:c11 /Ifirmware/Core/Inc desktop/tests/native_stm32_music_test.c /Fobuild/midi-tests/native_stm32_music_test.obj /Febuild/midi-tests/native_stm32_music_test.exe
+./build/midi-tests/native_stm32_music_test.exe
+$env:MUSIC_ENGINE_TEST_EXE=(Resolve-Path build/midi-tests/native_stm32_music_test.exe).Path
+$env:STM32_MUSIC_TEST_EXE=$env:MUSIC_ENGINE_TEST_EXE
+python -m unittest discover -s desktop/tests -v
+```
+
+Запускать из Developer PowerShell Visual Studio. Тест включает старые проверки ручного управления, выбор шести голосов, sustain, восстановление при перемотке, удержание индикации на 400 мс и погасание на 600 мс, границы пакетов, тайм-аут, повтор MIDI-пакета после потерянного ACK и приоритет ПК. Python дополнительно прогоняет длинную мелодию через реальное C-ядро с многократным пополнением очереди. `test_music_parity.py` сравнивает выбор STM32 с предварительным просмотром на тестовых композициях.
+
 Из корня проекта (Python с зависимостями `desktop/requirements.txt`):
 
 ```powershell
@@ -27,6 +39,8 @@ python -m unittest discover -s desktop/tests -v
 Ни один из этих шагов не прошивает устройство и не запускает двигатели.
 
 Проверки запуска и экрана (Developer PowerShell Visual Studio, из корня):
+
+`native_display_test.c` сравнивает 100 000 обновлений перенесённого на STM32 `display_overview.h` с исторической функцией из коммита ESP `00e979e` (`legacy_overview_reference.h`). Проверяются состояния всех шести индикаторов и внутренних таймеров, включая отсутствие будущей ноты, смену нот, паузу, сон, потерю связи, живой режим и переполнение часов. Отдельно проверены граница 1999/2000 мс и отсутствие таймеров погасания на ESP: экран меняется только после STATE v2. `native_stm32_music_test.c` проверяет выдачу STATE v2 настоящим протоколом STM, разделение фактической и отображаемой ноты/частоты и остановленный STEP во время удержания. Проверка startup принимает STATE v2 и отклоняет некорректные отображаемые флаги.
 
 ```powershell
 cl /nologo /utf-8 /std:c11 /Iesp32-diplsay-midi/Firmware/Api desktop/tests/native_display_test.c /Fobuild/midi-tests/ /Febuild/midi-tests/native_display_test.exe

@@ -36,7 +36,9 @@ enum {
     C_EVENTS,
     C_CLEAR,
     C_QUEUE,
-    C_BOOT_TEST
+    C_BOOT_TEST,
+    C_RAW_EVENTS,
+    C_RAW_SEEK
 };
 typedef struct {
     uint32_t frequency;
@@ -44,7 +46,7 @@ typedef struct {
 } Motor;
 typedef struct {
     uint32_t at, value;
-    uint8_t motor, op;
+    uint8_t motor, op, note;
 } Event;
 typedef struct {
     Motor motors[MOTOR_COUNT];
@@ -56,9 +58,16 @@ extern State state;
 void engine_init(void);
 void engine_tick(void);
 uint8_t engine_display_hold(uint8_t motor);
+uint32_t engine_display_epoch(void);
+uint8_t engine_display_preview(uint8_t *out, uint8_t capacity, uint32_t now);
 void engine_estop(void);
 void engine_fault(uint8_t error);
 void engine_note_set(const uint8_t *notes, uint8_t count);
+uint8_t engine_live_events(const uint8_t *data, uint8_t length, uint8_t connected);
+void engine_live_gate(uint8_t enabled);
+uint8_t engine_live_enabled(void);
+uint8_t engine_history_read(uint8_t *event);
+uint8_t engine_history_pending(void);
 uint8_t engine_command(uint8_t cmd, const uint8_t *p, uint8_t len, uint8_t *out, uint8_t *outlen);
 uint16_t frequency_period(uint32_t mhz);
 uint32_t period_frequency(uint16_t period);

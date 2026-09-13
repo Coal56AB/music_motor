@@ -2,7 +2,7 @@ import math
 
 TIMER_HZ = 1_000_000
 MIN_HZ = 20
-MAX_HZ = 4000
+MAX_HZ = 1200
 MICROSTEPS = {"Полный шаг": (0, 1), "1/2": (1, 2), "1/4": (2, 4), "1/8": (3, 8), "1/16": (7, 16)}
 
 
@@ -12,7 +12,7 @@ def note_frequency(note):
 
 def half_period(frequency):
     if not MIN_HZ <= frequency <= MAX_HZ:
-        raise ValueError("STEP frequency must be 20–4000 Hz")
+        raise ValueError("STEP frequency must be 20–1200 Hz")
     return int(TIMER_HZ / (2 * frequency) + 0.5)
 
 

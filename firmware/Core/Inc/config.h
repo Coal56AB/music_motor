@@ -15,7 +15,7 @@
  * GPIO меняются в MusicMotor.ioc; метки из generated main.h используются ниже.
  * Тактирование/USART согласуйте с CubeMX: несовпадение проверяется при старте.
  */
-#define FIRMWARE_VERSION        "1.0"
+#define FIRMWARE_VERSION        "1.1"
 #define MOTOR_COUNT             6u       /* Фиксировано форматом UART STATUS. */
 #define DEFAULT_INSTALLED_MASK  (/*MOTOR_1|*/MOTOR_2|MOTOR_3|MOTOR_4|MOTOR_5/*|MOTOR_6*/)
 
@@ -23,13 +23,13 @@
 /* Настройки таймера и ноты*/
 #define TIMER_HZ                1000000 /* Частота свободных счётчиков TIM2/3/4. */
 #define MIN_FREQ_MHZ            20000u   /* Миллигерцы: 20 Гц. */
-#define MAX_FREQ_MHZ            4000000u /* Миллигерцы: 4000 Гц. */
+#define MAX_FREQ_MHZ            1200000u /* Миллигерцы: 1200 Гц. */
 #define DEFAULT_NOTE            69u     /* A4, частота STEP = 440 Гц. */
 
 
 
 /* Настройки связи */
-#define NOTES_BUFFER_DEPTH          256    /* При изменении согласовать с desktop. */
+#define NOTES_BUFFER_DEPTH          512    /* Clients query capacity with C_QUEUE. */
 /* USART1 always serves the PC. Enable the independent ESP USART2 link. */
 #ifndef LIVE_MIDI_MODE
 #define LIVE_MIDI_MODE          1
@@ -41,7 +41,7 @@
 #define MIDI_DEBUG_GPIO         0 /* PC13 toggle immediately before motor update. */
 #endif
 #define UART_BAUD               115200u
-#define ESP_UART_BAUD           230400u
+#define ESP_UART_BAUD           460800u
 #define UART_RING_SIZE          512u    /* Степень двойки; отдельные RX и TX. */
 #define LINK_TIMEOUT_MS         2000u
 #define FRAME_TIMEOUT_MS        100u
@@ -67,19 +67,19 @@
  * программно инвертировать нельзя. Перепутанные пары обмоток чинятся проводами.
  */
 #ifndef M1_DIR_INVERT
-#define M1_DIR_INVERT 1u
+#define M1_DIR_INVERT 0u
 #endif
 #ifndef M2_DIR_INVERT
 #define M2_DIR_INVERT 0u
 #endif
 #ifndef M3_DIR_INVERT
-#define M3_DIR_INVERT 0u
+#define M3_DIR_INVERT 1u
 #endif
 #ifndef M4_DIR_INVERT
-#define M4_DIR_INVERT 0u
+#define M4_DIR_INVERT 1u
 #endif
 #ifndef M5_DIR_INVERT
-#define M5_DIR_INVERT 1u
+#define M5_DIR_INVERT 0u
 #endif
 #ifndef M6_DIR_INVERT
 #define M6_DIR_INVERT 0u

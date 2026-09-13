@@ -44,4 +44,9 @@ QScrollBar:horizontal { background:#111a29; height:12px; }
 QScrollBar::handle:horizontal { background:#3a4b64; min-width:30px; border-radius:4px; }
 QToolTip { background:#354a64; color:white; border:1px solid #647e9b; }
 QStatusBar { color:#9dafc4; }
+QFrame#errorNotice { background:#451e2a; border:2px solid #ff657c; border-radius:7px; }
+QFrame#errorNotice QLabel { background:transparent; color:#ffe9ec; border:0; font-size:14px; }
+QFrame#errorNotice QLabel#noticeTitle { color:#ff8d99; font-size:16px; font-weight:700; }
+QFrame#errorNotice QPushButton { background:#6e2a3a; color:#fff1f3; border:1px solid #e98798; }
+QLabel#warningText { color:#ff8d99; font-weight:600; }
 """

@@ -8,6 +8,7 @@ from PySide2.QtWidgets import (
     QGraphicsSimpleTextItem,
     QGraphicsItem,
     QInputDialog,
+    QApplication,
 )
 from midi.model import Note
 from midi.allocator import MOTOR_COLORS
@@ -181,6 +182,7 @@ class PianoRoll(QGraphicsView):
         self.undo_stack = EditHistory()
         self.note_items = []
         self.seeking = False
+        self.cursor_click = None
         self.note_drag = None
         self.scene().selectionChanged.connect(self.refresh_notes)
 
@@ -322,6 +324,11 @@ class PianoRoll(QGraphicsView):
         self.cursor_changed.emit(beat)
 
     def mousePressEvent(self, event):
+        self.cursor_click = None
+        if (event.button() == Qt.LeftButton and self.song and not self.read_only
+                and event.pos().x() >= self.key_width and event.pos().y() >= 20
+                and not event.modifiers()):
+            self.cursor_click = event.pos()
         if (event.button() == Qt.LeftButton and self.song and not self.read_only
                 and event.pos().y() < 20 and event.pos().x() >= self.key_width):
             self.seeking = True
@@ -347,6 +354,9 @@ class PianoRoll(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if (self.cursor_click is not None and
+                (event.pos()-self.cursor_click).manhattanLength() >= QApplication.startDragDistance()):
+            self.cursor_click = None
         if self.seeking:
             self.seek_cursor(event.pos())
             event.accept()
@@ -373,6 +383,10 @@ class PianoRoll(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        click, self.cursor_click = self.cursor_click, None
+        if (event.button() != Qt.LeftButton or click is None or
+                (event.pos()-click).manhattanLength() >= QApplication.startDragDistance()):
+            click = None
         if self.seeking:
             self.seeking = False
             event.accept()
@@ -384,9 +398,13 @@ class PianoRoll(QGraphicsView):
                 self.commit(drag['before'], "Длительность" if drag['resize'] else "Перемещение нот")
                 for item in self.note_items:
                     item.setSelected(item.note.id in selected)
+            elif click is not None:
+                self.seek_cursor(click)
             event.accept()
             return
         super().mouseReleaseEvent(event)
+        if click is not None:
+            self.seek_cursor(click)
 
     def note_at(self, pos):
         scene_pos = self.mapToScene(pos)
@@ -395,6 +413,7 @@ class PianoRoll(QGraphicsView):
                      if item.contains(item.mapFromScene(scene_pos))), None)
 
     def mouseDoubleClickEvent(self, event):
+        self.cursor_click = None
         if self.read_only or not self.song:
             return
         if event.pos().y() < 20:

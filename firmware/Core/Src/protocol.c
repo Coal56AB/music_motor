@@ -6,6 +6,8 @@
 #if LIVE_MIDI_MODE
 #include "note_set_wire.h"
 #include "half_duplex_wire.h"
+#include "display_overview.h"
+static DisplayOverview hmi_overview;
 static HdParser esp_wire;
 static uint32_t esp_wire_at;
 static uint8_t pc_active,auto_play,save_wait;
@@ -16,6 +18,8 @@ static uint8_t midi_used;
 static uint32_t midi_byte_at;
 static uint32_t midi_received_at;
 static uint8_t midi_seen;
+static uint8_t live_cache[208],live_cache_len,live_result,live_connected;
+static uint32_t live_cache_at;
 static void midi_byte(uint8_t b) {
     uint32_t now=platform_ms();
     if (midi_used && now-midi_byte_at>5u) midi_used=0;
@@ -45,7 +49,7 @@ static unsigned hmi_recent_next;
 static uint8_t save_packet[200],save_length,save_seq;
 static uint8_t save_status[8];
 static uint32_t save_sent,save_at;
-static uint8_t rpc_cache[208],rpc_cache_len,rpc_response[64],rpc_response_len;
+static uint8_t rpc_cache[208],rpc_cache_len,rpc_response[128],rpc_response_len;
 static uint32_t rpc_cached_at;
 static void hmi_byte(uint8_t b);
 static void hmi_poll(uint8_t emit);
@@ -63,9 +67,11 @@ void protocol_init(void) {
     used = previous_len = response_len = 0;
 #if LIVE_MIDI_MODE
     midi_used=midi_seen=hmi_used=hmi_link=hmi_authority=hmi_manual=0;
+    live_cache_len=live_connected=0;
     pc_song_len=pc_action_id=0;memset(pc_action,0,sizeof(pc_action));pc_title_sent=0;
     pc_active=0;pc_last=0;esp_wire.used=0;esp_wire_at=0;
     hmi_sent=0;
+    memset(&hmi_overview,0,sizeof(hmi_overview));
     save_wait=save_length=auto_play=rpc_cache_len=rpc_response_len=0;
     memset(save_status,0,sizeof(save_status));
     hmi_recent_next=0;memset(hmi_recent,0,sizeof(hmi_recent));
@@ -90,20 +96,20 @@ static uint8_t hmi_action(const uint8_t *p) {
         if(!++pc_action_id)++pc_action_id;
         pc_action[0]=pc_action_id;memcpy(pc_action+1,p,6);return 0;
     }
-    if(command==1||command==2)return 10; /* Songs are owned by the PC, not STM32. */
+    if(command==1&&live_connected&&!pc_active&&!auto_play){engine_live_gate(2);return 0;}
+    if(command==1||command==2)return 10;
     if(command>10)return 2;
     if(pc_active && command!=0)return 6;
     if(command!=0 && !hmi_authority)return 8;
-    if(command!=0 && midi_seen && platform_ms()-midi_received_at<=NS_TIMEOUT_MS)return 7;
-    if(command==0) {engine_estop();hmi_manual=!pc_active;return 0;}
+    if(command!=0 && command!=6 && command!=7 && midi_seen && platform_ms()-midi_received_at<=NS_TIMEOUT_MS)return 7;
+    if(command==0) {engine_live_gate(0);hmi_manual=!pc_active;return 0;}
     args[0]=motor;args[1]=(uint8_t)value;
     switch(command) {
     case 3: hmi_put32(args+1,value);err=engine_command(C_FREQ,args,5,out,&len);break;
     case 4: if(value>1)return 2;err=engine_command(C_ENABLE,args,2,out,&len);break;
     case 5:
         if(value>1)return 2;
-        if(value) {args[1]=1;err=engine_command(C_ENABLE,args,2,out,&len);}
-        if(!err)err=engine_command(value?C_START:C_STOP,args,1,out,&len);
+        err=engine_command(value?C_START:C_STOP,args,1,out,&len);
         break;
     case 6: if(value>1)return 2;err=engine_command(C_DIR,args,2,out,&len);break;
     case 7:
@@ -119,7 +125,8 @@ static uint8_t hmi_action(const uint8_t *p) {
         break;
     default:return 2;
     }
-    if(!err)hmi_manual=1;
+    /* Driver settings during music do not take over motor ownership. */
+    if(!err && command!=7 && !(command==6 && (midi_seen || auto_play)))hmi_manual=1;
     if(err==E_STATE) {
         if(state.reset)return 3;
         if(state.sleep)return 4;
@@ -165,7 +172,7 @@ static void hmi_byte(uint8_t b) {
     } else {memmove(hmi_frame,hmi_frame+1,12);hmi_used=12;}
 }
 static void hmi_poll(uint8_t emit) {
-    uint32_t now=platform_ms();uint8_t p[50]={1,1};
+    uint32_t now=platform_ms();uint8_t p[94]={3,1};
     if(emit && save_wait) {
         if(now-save_sent>=150 || !save_sent) {
             hmi_send(SONG_RELAY,save_seq,save_packet,save_length);save_sent=now;
@@ -176,12 +183,24 @@ static void hmi_poll(uint8_t emit) {
     if(!hmi_link)return;
     if(now-hmi_last>NS_TIMEOUT_MS) {
         if(hmi_manual)engine_estop();
-        hmi_manual=hmi_link=hmi_authority=0;return;
+        hmi_manual=hmi_link=hmi_authority=0;
+        memset(&hmi_overview,0,sizeof(hmi_overview));return;
     }
-    if(!emit || now-hmi_sent<50)return;
+    if(!emit)return;
+    uint32_t display_clock=now;
+    if(engine_history_pending()) {
+        uint8_t event[7];
+        for(unsigned n=0;n<8&&engine_history_read(event);++n){
+            display_clock=song_u32(event);
+            hmi_notes[event[4]]=event[6]?event[5]:255;hmi_send(0x42,0,event,7);
+        }
+        if(!engine_history_pending())display_clock=now;
+    }
+    if(now-hmi_sent<20)return;
     hmi_sent=now;
-    hmi_put32(p,now);hmi_send(0x43,0,p,4);memset(p,0,sizeof(p));p[0]=1;p[1]=1;
+    hmi_put32(p,display_clock);hmi_send(0x43,0,p,4);memset(p,0,sizeof(p));p[0]=3;p[1]=1;
     p[2]=state.sleep;p[3]=state.reset;p[4]=state.raw;p[5]=state.mask;
+    if(live_connected&&!pc_active&&!auto_play&&!engine_live_enabled())p[1]|=4;
     if(auto_play)hmi_put32(p+6,state.position);
     if(pc_active&&pc_song_len>=9) {
         memcpy(p+6,pc_song+1,8);
@@ -201,7 +220,7 @@ static void hmi_poll(uint8_t emit) {
     for(unsigned m=0;m<6;m++) {
         Motor *v=&state.motors[m];uint8_t pitch=v->active?v->note:255;
         uint8_t event[7];hmi_put32(event,now);event[4]=(uint8_t)m;
-        if(hmi_notes[m]!=pitch) {
+        if(!engine_history_pending()&&hmi_notes[m]!=pitch) {
             if(hmi_notes[m]<128) {event[5]=hmi_notes[m];event[6]=0;hmi_send(0x42,0,event,7);}
             if(pitch<128) {event[5]=pitch;event[6]=100;hmi_send(0x42,0,event,7);}
             hmi_notes[m]=pitch;
@@ -212,7 +231,24 @@ static void hmi_poll(uint8_t emit) {
         if(v->active)p[1]|=2;
     }
     if(midi_seen&&now-midi_received_at<=NS_TIMEOUT_MS)p[1]|=8;
-    hmi_send(0x40,0,p,50);
+    /* STATE v2 carries actual motors and ready-to-paint overview separately. */
+    DisplayMotor inputs[6];
+    for(unsigned m=0;m<6;++m) {
+        inputs[m].flags=p[14+m*6];inputs[m].note=p[15+m*6];
+        inputs[m].mhz=state.motors[m].frequency;
+    }
+    display_overview_update(&hmi_overview,inputs,now,1,p[1],p[2],p[3],p[5]);
+    for(unsigned m=0;m<6;++m) {
+        const DisplayMotor *v=&hmi_overview.motors[m];
+        p[50+m*6]=v->flags;p[51+m*6]=v->note;hmi_put32(p+52+m*6,v->mhz);
+    }
+    hmi_put32(p+86,now);hmi_put32(p+90,engine_display_epoch());
+    hmi_send(0x40,0,p,sizeof(p));
+    if(state.running) {
+        uint8_t preview[165];hmi_put32(preview,engine_display_epoch());
+        preview[4]=engine_display_preview(preview+5,16,now);
+        hmi_send(0x45,0,preview,5+10*preview[4]);
+    }
 }
 #endif
 static void drop(void) {
@@ -247,7 +283,7 @@ static void parse(void) {
             continue;
         }
 #if LIVE_MIDI_MODE
-        if((rx[4]>=C_PING && rx[4]<=C_QUEUE) || (rx[4]>=SONG_BEGIN && rx[4]<=52)) {
+        if((rx[4]>=C_PING && rx[4]<=C_RAW_SEEK) || (rx[4]>=SONG_BEGIN && rx[4]<=52)) {
             if(!pc_active) {
                 engine_estop();
                 auto_play=0;
@@ -334,7 +370,19 @@ void protocol_esp_byte(uint8_t byte) {
         const uint8_t *b=esp_wire.bytes+5;unsigned n=esp_wire.bytes[4];
         uint8_t service=n>=7&&b[0]==0xa5&&b[1]==0x5a&&b[2]+7u==n&&
             protocol_crc(b+2,n-4)==((uint16_t)b[n-2]|(uint16_t)b[n-1]<<8);
-        if(service && b[4]==SONG_REPLY && b[2]==8) {
+        if(service && b[4]==0x56 && b[2]>=1 && b[2]<=201 && (b[2]-1)%10==0) {
+            uint8_t result;
+            if(pc_active||auto_play||save_wait)result=12;
+            else if(live_cache_len==n&&now-live_cache_at<2000&&!memcmp(live_cache,b,n))result=live_result;
+            else {
+                uint8_t connected=b[5]&1;
+                if(connected!=live_connected){engine_live_gate(1);live_connected=connected;}
+                result=engine_live_events(b+6,b[2]-1,connected);
+                memcpy(live_cache,b,n);live_cache_len=(uint8_t)n;live_cache_at=now;live_result=result;
+            }
+            if(!result){midi_seen=live_connected;midi_received_at=now;}
+            hmi_send(0x57,b[3],&result,1);
+        } else if(service && b[4]==SONG_REPLY && b[2]==8) {
             if(save_wait && b[3]==save_seq && b[5]==save_packet[0]) {
                 memcpy(save_status,b+5,8);save_at=now;
                 if(b[6]!=255)save_wait=0;
@@ -357,8 +405,10 @@ void protocol_esp_byte(uint8_t byte) {
         } else for(unsigned i=0;i<n;++i) {
             midi_byte(esp_wire.bytes[5+i]);hmi_byte(esp_wire.bytes[5+i]);
         }
-        hmi_poll(1);
         platform_esp_reply(esp_wire.bytes[3]);
+        /* Start the reply before preview/history generation can consume its grant. */
+        platform_esp_poll();
+        hmi_poll(1);
     }
 #else
     (void)byte;
@@ -373,6 +423,12 @@ void protocol_poll(void) {
 #endif
     if (platform_uart_error()) {
         used = 0;
+#if LIVE_MIDI_MODE
+        /* USART1 is the PC port. Its framing/noise errors do not invalidate
+           autonomous data received over the separate ESP USART2 link. */
+        if(auto_play&&!pc_active)state.faults++;
+        else
+#endif
         engine_fault(E_UART);
     }
     if (platform_oc_error())

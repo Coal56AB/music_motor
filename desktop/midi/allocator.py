@@ -59,6 +59,7 @@ def pin_conflict_spans(song, installed_mask=63, music_mask=63, polyphony=6):
 
 @dataclass
 class Allocation:
+    raw_events: list = None
     events: list = field(default_factory=list)
     assignments: dict = field(default_factory=dict)
     skipped: dict = field(default_factory=dict)
@@ -70,13 +71,16 @@ class Allocation:
 
 
 def allocate(song, installed_mask=15, music_mask=15, polyphony=6,
-             strategy='intelligent', low_hz=20, high_hz=4000, transpose=0,
+             strategy='intelligent', low_hz=20, high_hz=1200, transpose=0,
              octave=True, speed=1.0, include_drums=False):
     if speed <= 0 or polyphony < 1:
         raise ValueError('Tempo and polyphony must be positive')
     motors = [i for i in range(6) if installed_mask & music_mask & (1 << i)]
     limit = min(polyphony, len(motors))
     result, grouped, pitches, pools = Allocation(), {}, {}, {}
+    from midi.device_events import device_events
+    result.raw_events = device_events(song, installed_mask & music_mask, polyphony, strategy,
+                                     low_hz, high_hz, transpose, octave, speed, include_drums)
     spans = sounding_spans(song)
     result.sound_ends = {uid: span[1] for uid, span in spans.items()}
     low, high = frequency_note_range(low_hz, high_hz)
